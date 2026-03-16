@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# CDK
+cdk/cdk.out/
+cdk/.cdk.staging/
+cdk/dist/
+cdk/*.js
+cdk/*.d.ts
+cdk/lib/*.js
+cdk/lib/*.d.ts
+cdk/bin/*.js
+cdk/bin/*.d.ts
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Lambda layers
+lambda/**/package/
+lambda/**/.aws-sam/
+
+# Frontend config (generated)
+frontend/config.js
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# AWS
+.aws/
+
+# Temporary files
+*.tmp
+*.temp

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>星际征途 - 智能客服</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.7/dist/amazon-cognito-identity.min.js"></script>
+</head>
+<body>
+    <!-- 登录界面 -->
+    <div id="loginContainer" class="container">
+        <div class="login-box">
+            <h1>星际征途</h1>
+            <h2>智能客服助手</h2>
+            <div id="loginForm">
+                <input type="email" id="loginEmail" placeholder="邮箱地址" required>
+                <input type="password" id="loginPassword" placeholder="密码" required>
+                <button onclick="login()">登录</button>
+                <div id="loginError" class="error"></div>
+                <div class="test-account">
+                    <p>测试账号</p>
+                    <p>邮箱: testuser@example.com</p>
+                    <p>密码: TestUser123!</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 聊天界面 -->
+    <div id="chatContainer" class="container hidden">
+        <div class="chat-box">
+            <div class="header">
+                <h1>星际征途 - 智能客服</h1>
+                <div class="user-info">
+                    <span id="userEmail"></span>
+                    <button onclick="logout()" class="logout-btn">退出</button>
+                </div>
+            </div>
+
+            <div class="messages" id="messages">
+                <div class="message assistant">
+                    <div class="message-content">
+                        <p>您好！我是星际征途的智能客服助手。我可以帮助您：</p>
+                        <ul>
+                            <li>回答游戏相关问题</li>
+                            <li>查询充值记录</li>
+                            <li>解决技术问题</li>
+                            <li>提供游戏指引</li>
+                        </ul>
+                        <p>请问有什么可以帮助您的？</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <textarea
+                    id="messageInput"
+                    placeholder="输入您的问题..."
+                    rows="3"
+                    onkeydown="handleKeyDown(event)"
+                ></textarea>
+                <button onclick="sendMessage()" id="sendBtn">
+                    发送
+                </button>
+            </div>
+
+            <div class="suggestions">
+                <button onclick="quickSend('如何升级星舰？')">如何升级星舰？</button>
+                <button onclick="quickSend('充值失败怎么办？')">充值失败怎么办？</button>
+                <button onclick="quickSend('查询我的充值记录')">查询充值记录</button>
+                <button onclick="quickSend('游戏卡顿怎么解决？')">游戏卡顿怎么解决？</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
