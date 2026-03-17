@@ -319,7 +319,7 @@ def handler(event, context):
         'bedrock:InvokeModelWithResponseStream',
       ],
       resources: [
-        `arn:aws:bedrock:${this.region}::foundation-model/anthropic.claude-sonnet-4-20250514`,
+        `arn:aws:bedrock:${this.region}::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0`,
       ],
     }));
 

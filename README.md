@@ -6,7 +6,7 @@
 
 本项目展示如何使用 AWS 服务构建一个智能游戏客服系统，具备以下特性：
 
-- **智能对话**: 使用 Claude Sonnet 4 模型，提供自然流畅的对话体验
+- **智能对话**: 使用 Claude Haiku 4.5 模型 (Global Inference Profile)，提供自然流畅的对话体验
 - **知识库检索**: 集成 Bedrock Knowledge Base，快速查询游戏 FAQ
 - **AgentCore Gateway**: 使用 AWS Bedrock AgentCore Gateway，通过 MCP (Model Context Protocol) 标准化工具调用
 - **IAM 授权**: Gateway 使用 AWS IAM SigV4 签名进行服务间安全认证
@@ -38,7 +38,7 @@
                  ↓
 ┌────────────────────────────────────────────────────────────────┐
 │              Lambda (Strands Agent)                             │
-│         - Claude Sonnet 4 via Bedrock                           │
+│         - Claude Haiku 4.5 via Bedrock (Global)                           │
 │         - Knowledge Base Retrieval                              │
 │         - MCP Client (IAM Auth)                                 │
 └───────┬────────────┬────────────────────────────────────────────┘
@@ -123,7 +123,7 @@ toolSchema: {
 ### 后端
 - **语言**: Python 3.12
 - **框架**: Strands Agents SDK
-- **AI 模型**: Claude Sonnet 4 (anthropic.claude-sonnet-4-20250514)
+- **AI 模型**: Claude Haiku 4.5 (global.anthropic.claude-haiku-4-5-20251001-v1:0)
 - **工具协议**: MCP (Model Context Protocol)
 
 ### AWS 服务
@@ -389,7 +389,7 @@ AWS 免费套餐包括：
 编辑 `lambda/agent/index.py`:
 
 ```python
-MODEL_ID = 'anthropic.claude-sonnet-4-20250514'  # 改为其他模型
+MODEL_ID = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'  # 改为其他模型
 ```
 
 可选模型：

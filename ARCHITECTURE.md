@@ -8,7 +8,7 @@ Frontend (S3+CloudFront)  →  API Gateway (REST, streaming)  →  Lambda (Stran
                                                           ┌────────────┼────────────┐
                                                           ↓            ↓            ↓
                                                    Bedrock KB    AgentCore GW   Bedrock LLM
-                                                   (知识库)     (MCP工具)      (Claude Sonnet)
+                                                   (知识库)     (MCP工具)      (Claude Haiku 4.5)
                                                                      ↓
                                                               Lambda (查询工具)
                                                                      ↓
@@ -19,7 +19,7 @@ Frontend (S3+CloudFront)  →  API Gateway (REST, streaming)  →  Lambda (Stran
 
 ### 1. Strands Agent (Lambda)
 - Python Lambda function，使用 strands-agents SDK
-- 模型: Claude Sonnet via Bedrock
+- 模型: Claude Haiku 4.5 via Bedrock
 - 工具: Bedrock Knowledge Base retrieval + AgentCore Gateway MCP tool
 - Lambda Response Streaming 支持（通过 API Gateway streaming）
 

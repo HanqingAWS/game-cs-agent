@@ -23,7 +23,7 @@ from strands_tools.mcp_proxy_for_aws import aws_iam_streamablehttp_client
 KNOWLEDGE_BASE_ID = os.environ.get('KNOWLEDGE_BASE_ID')
 AGENTCORE_GATEWAY_URL = os.environ.get('AGENTCORE_GATEWAY_URL')
 REGION = os.environ.get('AWS_REGION_NAME', 'us-east-1')
-MODEL_ID = 'anthropic.claude-sonnet-4-20250514'
+MODEL_ID = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
 
 # 系统提示词
 SYSTEM_PROMPT = """你是一个游戏客服助手，专门为"星际征途"游戏的玩家提供服务。
