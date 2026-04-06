@@ -232,6 +232,7 @@ export class GameCsAgentStack extends cdk.Stack {
       runtimeName: 'game_cs_agent_runtime',
       agentRuntimeArtifact: agentcore.AgentRuntimeArtifact.fromAsset(
         path.join(__dirname, '../../runtime'),
+        { platform: ecr_assets.Platform.LINUX_ARM64 },
       ),
       environmentVariables: {
         KNOWLEDGE_BASE_ID: knowledgeBaseId,
