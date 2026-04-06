@@ -89,128 +89,107 @@ export class GameCsAgentStack extends cdk.Stack {
     });
 
     // ========== Bedrock Knowledge Base ==========
-    // 注意: Bedrock Knowledge Base 需要使用 L1 构造或自定义资源
-    // 这里使用简化的方式，实际生产环境建议使用完整的 Bedrock API
 
-    // 创建 Bedrock 服务角色
+    // Bedrock service role for KB
     const bedrockKbRole = new iam.Role(this, 'BedrockKbRole', {
       assumedBy: new iam.ServicePrincipal('bedrock.amazonaws.com'),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonBedrockFullAccess'),
       ],
     });
-
     kbBucket.grantRead(bedrockKbRole);
+    bedrockKbRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['aoss:APIAccessAll'],
+      resources: ['*'],
+    }));
 
-    // 使用 Custom Resource 创建 Knowledge Base
+    // Lambda role for KB creation (defined early for AOSS access policy)
+    const createKbFunctionRole = new iam.Role(this, 'CreateKbFunctionRole', {
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
+        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonBedrockFullAccess'),
+      ],
+      inlinePolicies: {
+        KbCreation: new iam.PolicyDocument({
+          statements: [
+            new iam.PolicyStatement({
+              actions: ['iam:PassRole'],
+              resources: ['*'],
+            }),
+            new iam.PolicyStatement({
+              actions: ['aoss:*'],
+              resources: ['*'],
+            }),
+          ],
+        }),
+      },
+    });
+
+    // AOSS encryption policy
+    const aossEncPolicy = new cdk.CfnResource(this, 'AossEncryptionPolicy', {
+      type: 'AWS::OpenSearchServerless::SecurityPolicy',
+      properties: {
+        Name: 'game-cs-kb-enc',
+        Type: 'encryption',
+        Policy: JSON.stringify({
+          Rules: [{ Resource: ['collection/game-cs-kb'], ResourceType: 'collection' }],
+          AWSOwnedKey: true,
+        }),
+      },
+    });
+
+    // AOSS network policy
+    const aossNetPolicy = new cdk.CfnResource(this, 'AossNetworkPolicy', {
+      type: 'AWS::OpenSearchServerless::SecurityPolicy',
+      properties: {
+        Name: 'game-cs-kb-net',
+        Type: 'network',
+        Policy: JSON.stringify([{
+          Rules: [
+            { Resource: ['collection/game-cs-kb'], ResourceType: 'collection' },
+            { Resource: ['collection/game-cs-kb'], ResourceType: 'dashboard' },
+          ],
+          AllowFromPublic: true,
+        }]),
+      },
+    });
+
+    // AOSS collection
+    const aossCollection = new cdk.CfnResource(this, 'AossCollection', {
+      type: 'AWS::OpenSearchServerless::Collection',
+      properties: {
+        Name: 'game-cs-kb',
+        Type: 'VECTORSEARCH',
+      },
+    });
+    aossCollection.addDependency(aossEncPolicy);
+    aossCollection.addDependency(aossNetPolicy);
+
+    // AOSS data access policy - use Fn::Sub to inject resolved role ARNs
+    const aossAccessPolicy = new cdk.CfnResource(this, 'AossAccessPolicy', {
+      type: 'AWS::OpenSearchServerless::AccessPolicy',
+      properties: {
+        Name: 'game-cs-kb-access',
+        Type: 'data',
+        Policy: cdk.Fn.sub(
+          '[{"Rules":[{"Resource":["collection/game-cs-kb"],"Permission":["aoss:*"],"ResourceType":"collection"},{"Resource":["index/game-cs-kb/*"],"Permission":["aoss:*"],"ResourceType":"index"}],"Principal":["${BedrockRole}","${LambdaRole}"]}]',
+          {
+            BedrockRole: bedrockKbRole.roleArn,
+            LambdaRole: createKbFunctionRole.roleArn,
+          },
+        ),
+      },
+    });
+
+    // KB creation Lambda (external file to avoid inline escaping issues)
     const createKbFunction = new lambda.Function(this, 'CreateKbFunction', {
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'index.handler',
-      code: lambda.Code.fromInline(`
-import boto3
-import cfnresponse
-import json
-import time
-
-bedrock_agent = boto3.client('bedrock-agent')
-
-def handler(event, context):
-    print(f'Event: {json.dumps(event)}')
-
-    request_type = event['RequestType']
-    props = event['ResourceProperties']
-
-    try:
-        if request_type == 'Create':
-            # 创建知识库
-            kb_name = props['KnowledgeBaseName']
-            role_arn = props['RoleArn']
-            bucket_arn = props['BucketArn']
-
-            # 创建知识库
-            kb_response = bedrock_agent.create_knowledge_base(
-                name=kb_name,
-                description='Game FAQ Knowledge Base',
-                roleArn=role_arn,
-                knowledgeBaseConfiguration={
-                    'type': 'VECTOR',
-                    'vectorKnowledgeBaseConfiguration': {
-                        'embeddingModelArn': f'arn:aws:bedrock:{props["Region"]}::foundation-model/cohere.embed-multilingual-v3'
-                    }
-                },
-                storageConfiguration={
-                    'type': 'OPENSEARCH_SERVERLESS',
-                    'opensearchServerlessConfiguration': {
-                        'collectionArn': 'arn:aws:aoss:\${AWS::Region}:\${AWS::AccountId}:collection/default',
-                        'vectorIndexName': 'game-cs-index',
-                        'fieldMapping': {
-                            'vectorField': 'vector',
-                            'textField': 'text',
-                            'metadataField': 'metadata'
-                        }
-                    }
-                }
-            )
-
-            kb_id = kb_response['knowledgeBase']['knowledgeBaseId']
-
-            # 创建数据源
-            ds_response = bedrock_agent.create_data_source(
-                knowledgeBaseId=kb_id,
-                name=f'{kb_name}-s3-source',
-                dataSourceConfiguration={
-                    'type': 'S3',
-                    's3Configuration': {
-                        'bucketArn': bucket_arn,
-                        'inclusionPrefixes': ['documents/']
-                    }
-                }
-            )
-
-            ds_id = ds_response['dataSource']['dataSourceId']
-
-            # 开始同步
-            bedrock_agent.start_ingestion_job(
-                knowledgeBaseId=kb_id,
-                dataSourceId=ds_id
-            )
-
-            # 等待同步完成
-            time.sleep(30)
-
-            response_data = {
-                'KnowledgeBaseId': kb_id,
-                'DataSourceId': ds_id
-            }
-
-            cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data, kb_id)
-
-        elif request_type == 'Delete':
-            kb_id = event['PhysicalResourceId']
-
-            # 删除知识库（会自动删除数据源）
-            try:
-                bedrock_agent.delete_knowledge_base(knowledgeBaseId=kb_id)
-            except:
-                pass  # 如果不存在则忽略
-
-            cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, kb_id)
-
-        else:  # Update
-            cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, event['PhysicalResourceId'])
-
-    except Exception as e:
-        print(f'Error: {str(e)}')
-        cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
-      `),
-      timeout: cdk.Duration.minutes(5),
-      role: new iam.Role(this, 'CreateKbFunctionRole', {
-        assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
-        managedPolicies: [
-          iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
-          iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonBedrockFullAccess'),
-        ],
-      }),
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/create-kb')),
+      timeout: cdk.Duration.minutes(10),
+      memorySize: 256,
+      role: createKbFunctionRole,
     });
 
     const knowledgeBaseProvider = new cr.Provider(this, 'KnowledgeBaseProvider', {
@@ -224,8 +203,12 @@ def handler(event, context):
         RoleArn: bedrockKbRole.roleArn,
         BucketArn: kbBucket.bucketArn,
         Region: this.region,
+        CollectionArn: aossCollection.getAtt('Arn').toString(),
+        CollectionEndpoint: aossCollection.getAtt('CollectionEndpoint').toString(),
+        LambdaRoleArn: createKbFunctionRole.roleArn,
       },
     });
+    knowledgeBase.node.addDependency(aossAccessPolicy);
 
     const knowledgeBaseId = knowledgeBase.getAttString('KnowledgeBaseId');
 
