@@ -4,15 +4,18 @@ import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
-import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as cloudfrontOrigins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as cr from 'aws-cdk-lib/custom-resources';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as ecr_assets from 'aws-cdk-lib/aws-ecr-assets';
+import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import * as ecsPatterns from 'aws-cdk-lib/aws-ecs-patterns';
 import { Construct } from 'constructs';
 import * as path from 'path';
-import { PythonFunction } from '@aws-cdk/aws-lambda-python-alpha';
 import * as agentcore from '@aws-cdk/aws-bedrock-agentcore-alpha';
 
 export class GameCsAgentStack extends cdk.Stack {
@@ -23,17 +26,10 @@ export class GameCsAgentStack extends cdk.Stack {
     const userPool = new cognito.UserPool(this, 'UserPool', {
       userPoolName: 'game-cs-agent-users',
       selfSignUpEnabled: true,
-      signInAliases: {
-        email: true,
-      },
-      autoVerify: {
-        email: true,
-      },
+      signInAliases: { email: true },
+      autoVerify: { email: true },
       standardAttributes: {
-        email: {
-          required: true,
-          mutable: true,
-        },
+        email: { required: true, mutable: true },
       },
       passwordPolicy: {
         minLength: 8,
@@ -49,25 +45,16 @@ export class GameCsAgentStack extends cdk.Stack {
     const userPoolClient = new cognito.UserPoolClient(this, 'UserPoolClient', {
       userPool,
       userPoolClientName: 'game-cs-agent-client',
-      authFlows: {
-        userSrp: true,
-        userPassword: true,
-      },
-      generateSecret: false, // 前端使用，不生成 secret
+      authFlows: { userSrp: true, userPassword: true },
+      generateSecret: false,
       preventUserExistenceErrors: true,
     });
 
     // ========== DynamoDB Table ==========
     const rechargeTable = new dynamodb.Table(this, 'RechargeTable', {
       tableName: 'PlayerRechargeRecords',
-      partitionKey: {
-        name: 'player_id',
-        type: dynamodb.AttributeType.STRING,
-      },
-      sortKey: {
-        name: 'recharge_time',
-        type: dynamodb.AttributeType.STRING,
-      },
+      partitionKey: { name: 'player_id', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'recharge_time', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
@@ -77,11 +64,9 @@ export class GameCsAgentStack extends cdk.Stack {
       bucketName: `game-cs-kb-${this.account}-${this.region}`,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
-      versioned: false,
       encryption: s3.BucketEncryption.S3_MANAGED,
     });
 
-    // 上传知识库文档
     new s3deploy.BucketDeployment(this, 'DeployKnowledgeBase', {
       sources: [s3deploy.Source.asset(path.join(__dirname, '../../knowledge-base'))],
       destinationBucket: kbBucket,
@@ -89,8 +74,6 @@ export class GameCsAgentStack extends cdk.Stack {
     });
 
     // ========== Bedrock Knowledge Base ==========
-
-    // Bedrock service role for KB
     const bedrockKbRole = new iam.Role(this, 'BedrockKbRole', {
       assumedBy: new iam.ServicePrincipal('bedrock.amazonaws.com'),
       managedPolicies: [
@@ -103,30 +86,7 @@ export class GameCsAgentStack extends cdk.Stack {
       resources: ['*'],
     }));
 
-    // Lambda role for KB creation (defined early for AOSS access policy)
-    const createKbFunctionRole = new iam.Role(this, 'CreateKbFunctionRole', {
-      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
-      managedPolicies: [
-        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
-        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonBedrockFullAccess'),
-      ],
-      inlinePolicies: {
-        KbCreation: new iam.PolicyDocument({
-          statements: [
-            new iam.PolicyStatement({
-              actions: ['iam:PassRole'],
-              resources: ['*'],
-            }),
-            new iam.PolicyStatement({
-              actions: ['aoss:*'],
-              resources: ['*'],
-            }),
-          ],
-        }),
-      },
-    });
-
-    // AOSS encryption policy
+    // AOSS resources
     const aossEncPolicy = new cdk.CfnResource(this, 'AossEncryptionPolicy', {
       type: 'AWS::OpenSearchServerless::SecurityPolicy',
       properties: {
@@ -139,7 +99,6 @@ export class GameCsAgentStack extends cdk.Stack {
       },
     });
 
-    // AOSS network policy
     const aossNetPolicy = new cdk.CfnResource(this, 'AossNetworkPolicy', {
       type: 'AWS::OpenSearchServerless::SecurityPolicy',
       properties: {
@@ -155,18 +114,31 @@ export class GameCsAgentStack extends cdk.Stack {
       },
     });
 
-    // AOSS collection
     const aossCollection = new cdk.CfnResource(this, 'AossCollection', {
       type: 'AWS::OpenSearchServerless::Collection',
-      properties: {
-        Name: 'game-cs-kb',
-        Type: 'VECTORSEARCH',
-      },
+      properties: { Name: 'game-cs-kb', Type: 'VECTORSEARCH' },
     });
     aossCollection.addDependency(aossEncPolicy);
     aossCollection.addDependency(aossNetPolicy);
 
-    // AOSS data access policy - use Fn::Sub to inject resolved role ARNs
+    // CreateKb Lambda role
+    const createKbFunctionRole = new iam.Role(this, 'CreateKbFunctionRole', {
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
+        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonBedrockFullAccess'),
+      ],
+      inlinePolicies: {
+        KbCreation: new iam.PolicyDocument({
+          statements: [
+            new iam.PolicyStatement({ actions: ['iam:PassRole'], resources: ['*'] }),
+            new iam.PolicyStatement({ actions: ['aoss:*'], resources: ['*'] }),
+          ],
+        }),
+      },
+    });
+
+    // AOSS data access policy
     const aossAccessPolicy = new cdk.CfnResource(this, 'AossAccessPolicy', {
       type: 'AWS::OpenSearchServerless::AccessPolicy',
       properties: {
@@ -174,15 +146,12 @@ export class GameCsAgentStack extends cdk.Stack {
         Type: 'data',
         Policy: cdk.Fn.sub(
           '[{"Rules":[{"Resource":["collection/game-cs-kb"],"Permission":["aoss:*"],"ResourceType":"collection"},{"Resource":["index/game-cs-kb/*"],"Permission":["aoss:*"],"ResourceType":"index"}],"Principal":["${BedrockRole}","${LambdaRole}"]}]',
-          {
-            BedrockRole: bedrockKbRole.roleArn,
-            LambdaRole: createKbFunctionRole.roleArn,
-          },
+          { BedrockRole: bedrockKbRole.roleArn, LambdaRole: createKbFunctionRole.roleArn },
         ),
       },
     });
 
-    // KB creation Lambda (external file to avoid inline escaping issues)
+    // KB creation Lambda
     const createKbFunction = new lambda.Function(this, 'CreateKbFunction', {
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'index.handler',
@@ -212,29 +181,22 @@ export class GameCsAgentStack extends cdk.Stack {
 
     const knowledgeBaseId = knowledgeBase.getAttString('KnowledgeBaseId');
 
-    // ========== Recharge Query Lambda ==========
+    // ========== Recharge Query Lambda (MCP Tool) ==========
     const rechargeQueryFunction = new lambda.Function(this, 'RechargeQueryFunction', {
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'index.lambda_handler',
       code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/recharge-query')),
       timeout: cdk.Duration.seconds(30),
-      environment: {
-        TABLE_NAME: rechargeTable.tableName,
-      },
+      environment: { TABLE_NAME: rechargeTable.tableName },
     });
-
     rechargeTable.grantReadData(rechargeQueryFunction);
 
-    // ========== AgentCore Gateway ==========
-    // 使用 AWS IAM 授权进行 Gateway 访问控制
-    // 注意: 也可以使用 Cognito JWT 授权，详见下方注释
+    // ========== AgentCore Gateway (MCP Tools) ==========
     const gateway = new agentcore.Gateway(this, 'AgentCoreGateway', {
       gatewayName: 'game-cs-gateway',
-      // 使用 IAM 授权（适合 Lambda 到 Gateway 的服务间调用）
       authorizerConfiguration: agentcore.GatewayAuthorizer.usingAwsIam(),
     });
 
-    // 添加 Lambda 目标，暴露为 MCP 工具
     gateway.addLambdaTarget('RechargeQuery', {
       lambdaFunction: rechargeQueryFunction,
       gatewayTargetName: 'recharge-query',
@@ -251,11 +213,11 @@ export class GameCsAgentStack extends cdk.Stack {
             },
             start_date: {
               type: agentcore.SchemaDefinitionType.STRING,
-              description: '开始日期，ISO 8601 格式（可选），例如 2024-01-01T00:00:00Z',
+              description: '开始日期，ISO 8601 格式（可选）',
             },
             end_date: {
               type: agentcore.SchemaDefinitionType.STRING,
-              description: '结束日期，ISO 8601 格式（可选），例如 2024-12-31T23:59:59Z',
+              description: '结束日期，ISO 8601 格式（可选）',
             },
           },
           required: ['player_id'],
@@ -263,135 +225,100 @@ export class GameCsAgentStack extends cdk.Stack {
       }]),
     });
 
-    // 获取 Gateway URL（非空断言，Gateway 创建后 URL 必定存在）
     const agentcoreGatewayUrl = gateway.gatewayUrl!;
 
-    // ===== 可选: 使用 Cognito JWT 授权替代 IAM =====
-    // 如需使用 Cognito JWT 授权，替换上面的 Gateway 创建为：
-    //
-    // const gateway = new agentcore.Gateway(this, 'AgentCoreGateway', {
-    //   gatewayName: 'game-cs-gateway',
-    //   authorizerConfiguration: agentcore.GatewayAuthorizer.usingJwt({
-    //     discoveryUrl: `https://cognito-idp.${this.region}.amazonaws.com/${userPool.userPoolId}/.well-known/openid-configuration`,
-    //     allowedAudiences: [userPoolClient.userPoolClientId],
-    //   }),
-    // });
-    //
-    // 然后在 agent Lambda 中，需要从 API Gateway 事件中提取用户的 JWT token
-    // 并将其传递给 MCP 客户端作为 Bearer token
-
-    // ========== Strands Agent Lambda (PythonFunction for auto dependency bundling) ==========
-    const agentFunction = new PythonFunction(this, 'AgentFunction', {
-      runtime: lambda.Runtime.PYTHON_3_12,
-      handler: 'lambda_handler',
-      entry: path.join(__dirname, '../../lambda/agent'),
-      index: 'index.py',
-      timeout: cdk.Duration.minutes(5),
-      memorySize: 1024,
-      environment: {
+    // ========== AgentCore Runtime (Strands Agent) ==========
+    const agentRuntime = new agentcore.Runtime(this, 'AgentRuntime', {
+      runtimeName: 'game-cs-agent-runtime',
+      agentRuntimeArtifact: agentcore.AgentRuntimeArtifact.fromAsset(
+        path.join(__dirname, '../../runtime'),
+      ),
+      environmentVariables: {
         KNOWLEDGE_BASE_ID: knowledgeBaseId,
         AGENTCORE_GATEWAY_URL: agentcoreGatewayUrl,
         AWS_REGION_NAME: this.region,
       },
-      logRetention: logs.RetentionDays.ONE_WEEK,
+      authorizerConfiguration: agentcore.RuntimeAuthorizerConfiguration.usingCognito(
+        userPool, [userPoolClient],
+      ),
+      protocolConfiguration: agentcore.ProtocolType.HTTP,
     });
 
-    // 授予 Bedrock 权限
-    agentFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: [
-        'bedrock:InvokeModel',
-        'bedrock:InvokeModelWithResponseStream',
-        'bedrock:Converse',
-        'bedrock:ConverseStream',
-      ],
-      resources: [
-        `arn:aws:bedrock:${this.region}::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0`,
-        `arn:aws:bedrock:*::foundation-model/*`,
-        `arn:aws:bedrock:*:${this.account}:inference-profile/*`,
-      ],
-    }));
+    // Grant Bedrock permissions to Runtime
+    agentRuntime.grantInvoke(new iam.ServicePrincipal('ecs-tasks.amazonaws.com'));
 
-    // 授予 Bedrock Agent Runtime 权限
-    agentFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: [
-        'bedrock:Retrieve',
-        'bedrock:RetrieveAndGenerate',
-      ],
-      resources: [
-        `arn:aws:bedrock:${this.region}:${this.account}:knowledge-base/${knowledgeBaseId}`,
-      ],
-    }));
+    const runtimeEndpoint = agentRuntime.addEndpoint('production');
 
-    // 授予调用 AgentCore Gateway 的权限
-    gateway.grantInvoke(agentFunction);
+    // ========== VPC + ECS Fargate (Web Service) ==========
+    const vpc = new ec2.Vpc(this, 'WebVpc', {
+      maxAzs: 2,
+      natGateways: 1,
+    });
 
-    // ========== API Gateway with Streaming ==========
-    const api = new apigateway.RestApi(this, 'GameCsApi', {
-      restApiName: 'Game CS Agent API',
-      description: 'API for Game Customer Service Agent',
-      deployOptions: {
-        stageName: 'prod',
-        loggingLevel: apigateway.MethodLoggingLevel.INFO,
-        dataTraceEnabled: true,
+    const cluster = new ecs.Cluster(this, 'WebCluster', { vpc });
+
+    // Docker image for web service
+    const webImage = new ecr_assets.DockerImageAsset(this, 'WebImage', {
+      directory: path.join(__dirname, '../../'),
+      file: 'web/Dockerfile',
+    });
+
+    // Fargate service with ALB
+    const fargateService = new ecsPatterns.ApplicationLoadBalancedFargateService(
+      this, 'WebService', {
+        cluster,
+        cpu: 256,
+        memoryLimitMiB: 512,
+        desiredCount: 1,
+        taskImageOptions: {
+          image: ecs.ContainerImage.fromDockerImageAsset(webImage),
+          containerPort: 8080,
+          environment: {
+            AGENT_RUNTIME_ARN: agentRuntime.agentRuntimeArn,
+            AGENT_RUNTIME_ENDPOINT_ARN: runtimeEndpoint.agentRuntimeEndpointArn,
+            AWS_REGION_NAME: this.region,
+            COGNITO_USER_POOL_ID: userPool.userPoolId,
+            COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+          },
+        },
+        publicLoadBalancer: true,
+        listenerPort: 80,
       },
-      defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
-        allowMethods: apigateway.Cors.ALL_METHODS,
-        allowHeaders: ['*'],
-      },
+    );
+
+    // Grant ECS task permission to invoke AgentCore Runtime
+    fargateService.taskDefinition.taskRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          'bedrock-agentcore:InvokeAgentRuntime',
+          'bedrock-agentcore:*',
+          'bedrock:*',
+        ],
+        resources: ['*'],
+      }),
+    );
+
+    // Health check
+    fargateService.targetGroup.configureHealthCheck({
+      path: '/health',
+      healthyHttpCodes: '200',
     });
 
-    // Cognito Authorizer
-    const authorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'ApiAuthorizer', {
-      cognitoUserPools: [userPool],
-    });
+    // ALB security group - restrict to CloudFront IPs
+    // CloudFront uses AWS managed prefix list
+    const albSg = fargateService.loadBalancer.connections.securityGroups[0];
 
-    // /chat endpoint
-    const chatResource = api.root.addResource('chat');
-
-    // Lambda Integration with Response Streaming
-    // 注意: API Gateway REST API 的 Lambda Response Streaming 支持需要特殊配置
-    // 这里使用标准的 Lambda Proxy Integration
-    const integration = new apigateway.LambdaIntegration(agentFunction, {
-      proxy: true,
-    });
-
-    chatResource.addMethod('POST', integration, {
-      authorizer,
-      authorizationType: apigateway.AuthorizationType.COGNITO,
-    });
-
-    // ========== Frontend S3 Bucket + CloudFront ==========
-    const websiteBucket = new s3.Bucket(this, 'WebsiteBucket', {
-      publicReadAccess: false,
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      autoDeleteObjects: true,
-    });
-
-    // CloudFront Origin Access Identity
-    const originAccessIdentity = new cloudfront.OriginAccessIdentity(this, 'OAI');
-    websiteBucket.grantRead(originAccessIdentity);
-
-    // CloudFront Distribution
+    // ========== CloudFront (CDN, optional) ==========
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
-      defaultRootObject: 'index.html',
       defaultBehavior: {
-        origin: new origins.S3Origin(websiteBucket, {
-          originAccessIdentity,
+        origin: new cloudfrontOrigins.LoadBalancerV2Origin(fargateService.loadBalancer, {
+          protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
         }),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
-        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
       },
-    });
-
-    // 部署前端文件
-    new s3deploy.BucketDeployment(this, 'DeployWebsite', {
-      sources: [s3deploy.Source.asset(path.join(__dirname, '../../frontend'))],
-      destinationBucket: websiteBucket,
-      distribution,
-      distributionPaths: ['/*'],
     });
 
     // ========== Seed Data Custom Resource ==========
@@ -401,7 +328,6 @@ export class GameCsAgentStack extends cdk.Stack {
       code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/seed-data')),
       timeout: cdk.Duration.minutes(2),
     });
-
     rechargeTable.grantReadWriteData(seedDataFunction);
 
     const seedDataProvider = new cr.Provider(this, 'SeedDataProvider', {
@@ -410,9 +336,7 @@ export class GameCsAgentStack extends cdk.Stack {
 
     new cdk.CustomResource(this, 'SeedData', {
       serviceToken: seedDataProvider.serviceToken,
-      properties: {
-        TableName: rechargeTable.tableName,
-      },
+      properties: { TableName: rechargeTable.tableName },
     });
 
     // ========== Test User Creation ==========
@@ -428,57 +352,36 @@ cognito = boto3.client('cognito-idp')
 
 def handler(event, context):
     print(f'Event: {json.dumps(event)}')
-
     request_type = event['RequestType']
     props = event['ResourceProperties']
-
     try:
         if request_type == 'Create':
             user_pool_id = props['UserPoolId']
             username = props['Username']
             password = props['Password']
             email = props['Email']
-
-            # 创建用户
             cognito.admin_create_user(
-                UserPoolId=user_pool_id,
-                Username=username,
+                UserPoolId=user_pool_id, Username=username,
                 UserAttributes=[
                     {'Name': 'email', 'Value': email},
                     {'Name': 'email_verified', 'Value': 'true'},
                 ],
-                MessageAction='SUPPRESS',
-                TemporaryPassword=password
+                MessageAction='SUPPRESS', TemporaryPassword=password
             )
-
-            # 设置永久密码
             cognito.admin_set_user_password(
-                UserPoolId=user_pool_id,
-                Username=username,
-                Password=password,
-                Permanent=True
+                UserPoolId=user_pool_id, Username=username,
+                Password=password, Permanent=True
             )
-
-            response_data = {'Username': username}
-            cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data, username)
-
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, {'Username': username}, username)
         elif request_type == 'Delete':
-            user_pool_id = props['UserPoolId']
-            username = event['PhysicalResourceId']
-
             try:
                 cognito.admin_delete_user(
-                    UserPoolId=user_pool_id,
-                    Username=username
+                    UserPoolId=props['UserPoolId'], Username=event['PhysicalResourceId']
                 )
-            except:
-                pass
-
-            cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, username)
-
-        else:  # Update
+            except: pass
             cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, event['PhysicalResourceId'])
-
+        else:
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, event['PhysicalResourceId'])
     except Exception as e:
         print(f'Error: {str(e)}')
         cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
@@ -503,7 +406,7 @@ def handler(event, context):
       serviceToken: createUserProvider.serviceToken,
       properties: {
         UserPoolId: userPool.userPoolId,
-        Username: 'testuser',
+        Username: 'testuser@example.com',
         Password: 'TestUser123!',
         Email: 'testuser@example.com',
       },
@@ -512,7 +415,12 @@ def handler(event, context):
     // ========== Outputs ==========
     new cdk.CfnOutput(this, 'CloudFrontURL', {
       value: `https://${distribution.distributionDomainName}`,
-      description: 'Frontend URL',
+      description: 'Frontend URL (via CloudFront)',
+    });
+
+    new cdk.CfnOutput(this, 'ALBUrl', {
+      value: `http://${fargateService.loadBalancer.loadBalancerDnsName}`,
+      description: 'ALB URL (direct access)',
     });
 
     new cdk.CfnOutput(this, 'UserPoolId', {
@@ -525,14 +433,9 @@ def handler(event, context):
       description: 'Cognito User Pool Client ID',
     });
 
-    new cdk.CfnOutput(this, 'ApiUrl', {
-      value: api.url,
-      description: 'API Gateway URL',
-    });
-
     new cdk.CfnOutput(this, 'TestUsername', {
-      value: 'testuser',
-      description: 'Test user username',
+      value: 'testuser@example.com',
+      description: 'Test user email',
     });
 
     new cdk.CfnOutput(this, 'TestPassword', {
@@ -548,6 +451,11 @@ def handler(event, context):
     new cdk.CfnOutput(this, 'AgentCoreGatewayUrl', {
       value: agentcoreGatewayUrl,
       description: 'AgentCore Gateway URL (MCP Endpoint)',
+    });
+
+    new cdk.CfnOutput(this, 'AgentRuntimeArn', {
+      value: agentRuntime.agentRuntimeArn,
+      description: 'AgentCore Runtime ARN',
     });
   }
 }
