@@ -139,7 +139,7 @@ echo -e "${YELLOW}创建并上传前端配置文件...${NC}"
 
 cat > /tmp/config.js <<EOF
 // AWS 配置 - 由 deploy.sh 自动生成
-window.APP_CONFIG = {
+const AWS_CONFIG = {
     userPoolId: '${USER_POOL_ID}',
     clientId: '${CLIENT_ID}',
     apiUrl: '${API_URL}'
