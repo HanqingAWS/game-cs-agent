@@ -42,12 +42,19 @@ def ensure_aoss_access(collection_name, bedrock_role_arn, lambda_role_arn):
     try:
         current = aoss.get_access_policy(name=policy_name, type='data')
         version = current['accessPolicyDetail']['policyVersion']
-        aoss.update_access_policy(name=policy_name, type='data', policy=new_policy, policyVersion=version)
-        print(f'Updated access policy with principals: {bedrock_role_arn}, {lambda_role_arn}')
+        try:
+            aoss.update_access_policy(name=policy_name, type='data', policy=new_policy, policyVersion=version)
+            print(f'Updated access policy with principals: {bedrock_role_arn}, {lambda_role_arn}')
+        except aoss.exceptions.ValidationException:
+            print('Access policy already has correct content, no update needed')
+    except aoss.exceptions.ResourceNotFoundException:
+        try:
+            aoss.create_access_policy(name=policy_name, type='data', policy=new_policy)
+            print('Created access policy')
+        except aoss.exceptions.ConflictException:
+            print('Access policy already exists')
     except Exception as e:
-        print(f'Policy update failed ({e}), trying create...')
-        aoss.create_access_policy(name=policy_name, type='data', policy=new_policy)
-        print('Created access policy')
+        print(f'Access policy setup warning (non-fatal): {e}')
 
 
 def create_vector_index(endpoint, region):
