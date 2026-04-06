@@ -199,7 +199,7 @@ export class GameCsAgentStack extends cdk.Stack {
     const knowledgeBase = new cdk.CustomResource(this, 'KnowledgeBase', {
       serviceToken: knowledgeBaseProvider.serviceToken,
       properties: {
-        KnowledgeBaseName: 'game-cs-knowledge-base',
+        KnowledgeBaseName: 'game-cs-kb',
         RoleArn: bedrockKbRole.roleArn,
         BucketArn: kbBucket.bucketArn,
         Region: this.region,
