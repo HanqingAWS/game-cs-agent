@@ -109,7 +109,9 @@ def handler(event, context):
                     else:
                         raise
 
-            time.sleep(10)
+            # Wait for index to propagate in AOSS before creating KB
+            print('Waiting 30s for index propagation...')
+            time.sleep(30)
 
             # Step 4: Create Knowledge Base (handle name conflict from orphaned KBs)
             print('Creating Knowledge Base...')
