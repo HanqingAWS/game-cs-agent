@@ -301,9 +301,13 @@ export class GameCsAgentStack extends cdk.Stack {
       actions: [
         'bedrock:InvokeModel',
         'bedrock:InvokeModelWithResponseStream',
+        'bedrock:Converse',
+        'bedrock:ConverseStream',
       ],
       resources: [
         `arn:aws:bedrock:${this.region}::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0`,
+        `arn:aws:bedrock:*::foundation-model/*`,
+        `arn:aws:bedrock:*:${this.account}:inference-profile/*`,
       ],
     }));
 
