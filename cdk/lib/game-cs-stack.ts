@@ -240,9 +240,7 @@ export class GameCsAgentStack extends cdk.Stack {
         AGENTCORE_GATEWAY_URL: agentcoreGatewayUrl,
         AWS_REGION_NAME: this.region,
       },
-      authorizerConfiguration: agentcore.RuntimeAuthorizerConfiguration.usingCognito(
-        userPool, [userPoolClient],
-      ),
+      authorizerConfiguration: agentcore.RuntimeAuthorizerConfiguration.usingIAM(),
       protocolConfiguration: agentcore.ProtocolType.HTTP,
     });
 
