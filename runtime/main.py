@@ -100,8 +100,21 @@ def get_agent():
     global _agent
     if _agent is None:
         model = BedrockModel(model_id=MODEL_ID, region=REGION)
-        tools = create_tools()
-        _agent = Agent(model=model, system_prompt=SYSTEM_PROMPT, tools=tools)
+        # Start with KB tool only; MCP can fail without breaking Agent
+        tools = [search_knowledge_base]
+        if AGENTCORE_GATEWAY_URL:
+            try:
+                auth = SigV4HttpxAuth(region=REGION, service='bedrock-agentcore')
+                mcp = MCPClient(lambda: streamablehttp_client(url=AGENTCORE_GATEWAY_URL, auth=auth))
+                tools.append(mcp)
+                print(f'MCP client initialized for {AGENTCORE_GATEWAY_URL}')
+            except Exception as e:
+                print(f'MCP client init failed (agent will work without MCP tools): {e}')
+        try:
+            _agent = Agent(model=model, system_prompt=SYSTEM_PROMPT, tools=tools)
+        except Exception as e:
+            print(f'Agent init with MCP failed, retrying without MCP: {e}')
+            _agent = Agent(model=model, system_prompt=SYSTEM_PROMPT, tools=[search_knowledge_base])
     return _agent
 
 
