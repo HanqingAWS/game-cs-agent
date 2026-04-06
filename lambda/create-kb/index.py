@@ -111,11 +111,28 @@ def handler(event, context):
 
             time.sleep(10)
 
-            # Step 4: Create Knowledge Base
+            # Step 4: Create Knowledge Base (handle name conflict from orphaned KBs)
             print('Creating Knowledge Base...')
             bedrock = boto3.client('bedrock-agent')
+            kb_name = props['KnowledgeBaseName']
+
+            # Check if KB with same name exists (orphaned from previous failed deploy)
+            existing_kbs = bedrock.list_knowledge_bases()
+            for existing in existing_kbs.get('knowledgeBaseSummaries', []):
+                if existing['name'] == kb_name:
+                    old_id = existing['knowledgeBaseId']
+                    print(f'Found existing KB with same name: {old_id} (status: {existing["status"]}), deleting...')
+                    try:
+                        for ds in bedrock.list_data_sources(knowledgeBaseId=old_id).get('dataSourceSummaries', []):
+                            bedrock.delete_data_source(knowledgeBaseId=old_id, dataSourceId=ds['dataSourceId'])
+                            time.sleep(5)
+                        bedrock.delete_knowledge_base(knowledgeBaseId=old_id)
+                        time.sleep(10)
+                    except Exception as del_err:
+                        print(f'Delete old KB warning: {del_err}')
+
             kb = bedrock.create_knowledge_base(
-                name=props['KnowledgeBaseName'],
+                name=kb_name,
                 description='Game Customer Service FAQ Knowledge Base',
                 roleArn=bedrock_role_arn,
                 knowledgeBaseConfiguration={
