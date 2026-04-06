@@ -6,8 +6,6 @@ import boto3
 import json
 import time
 import urllib3
-from botocore.auth import SigV4Auth
-from botocore.awsrequest import AWSRequest
 
 # Send CloudFormation response manually (no cfnresponse dependency needed)
 http = urllib3.PoolManager()
@@ -58,10 +56,25 @@ def ensure_aoss_access(collection_name, bedrock_role_arn, lambda_role_arn):
 
 
 def create_vector_index(endpoint, region):
-    """Create HNSW vector index in AOSS collection"""
-    creds = boto3.Session().get_credentials().get_frozen_credentials()
-    url = f'{endpoint}/game-cs-index'
-    body = json.dumps({
+    """Create HNSW vector index in AOSS collection using opensearch-py"""
+    from opensearchpy import OpenSearch, RequestsHttpConnection
+    from requests_aws4auth import AWS4Auth
+
+    creds = boto3.Session().get_credentials()
+    awsauth = AWS4Auth(
+        creds.access_key, creds.secret_key, region, 'aoss',
+        session_token=creds.token,
+    )
+    host = endpoint.replace('https://', '')
+    client = OpenSearch(
+        hosts=[{'host': host, 'port': 443}],
+        http_auth=awsauth,
+        use_ssl=True,
+        verify_certs=True,
+        connection_class=RequestsHttpConnection,
+        timeout=60,
+    )
+    index_body = {
         'settings': {'index': {'knn': True, 'knn.algo_param.ef_search': 512}},
         'mappings': {
             'properties': {
@@ -75,14 +88,9 @@ def create_vector_index(endpoint, region):
                 'AMAZON_BEDROCK_METADATA': {'type': 'text'},
             }
         }
-    })
-    req = AWSRequest(method='PUT', url=url, data=body,
-                     headers={'Content-Type': 'application/json'})
-    SigV4Auth(creds, 'aoss', region).add_auth(req)
-    resp = urllib3.PoolManager().request('PUT', url, body=body, headers=dict(req.headers))
-    print(f'Create index response: {resp.status} {resp.data.decode()[:500]}')
-    if resp.status not in (200, 201):
-        raise Exception(f'Index creation failed: {resp.status}')
+    }
+    result = client.indices.create(index='game-cs-index', body=index_body)
+    print(f'Create index result: {result}')
 
 
 def handler(event, context):
