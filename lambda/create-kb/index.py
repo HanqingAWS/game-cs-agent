@@ -126,7 +126,7 @@ def handler(event, context):
                     old_id = existing['knowledgeBaseId']
                     old_status = existing['status']
                     print(f'Found existing KB: {old_id} (status: {old_status})')
-                    if old_status in ('ACTIVE', 'DELETE_UNSUCCESSFUL'):
+                    if old_status == 'ACTIVE':
                         print(f'Reusing existing KB ({old_status}): {old_id}')
                         kb_id = old_id
                         break
