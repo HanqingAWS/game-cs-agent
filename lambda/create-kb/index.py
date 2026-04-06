@@ -154,8 +154,12 @@ def handler(event, context):
                             print(f'Delete old KB warning (non-fatal): {del_err}')
 
             if not kb_id:
-                kb = bedrock.create_knowledge_base(
-                    name=kb_name,
+                # Try with original name, fall back to suffixed name if conflict
+                import random, string
+                for attempt_name in [kb_name, f'{kb_name}-{random.randint(100,999)}']:
+                    try:
+                        kb = bedrock.create_knowledge_base(
+                            name=attempt_name,
                     description='Game Customer Service FAQ Knowledge Base',
                     roleArn=bedrock_role_arn,
                     knowledgeBaseConfiguration={
@@ -176,9 +180,16 @@ def handler(event, context):
                             },
                         },
                     },
-                )
-                kb_id = kb['knowledgeBase']['knowledgeBaseId']
-                print(f'Knowledge Base created: {kb_id}')
+                        )
+                        kb_id = kb['knowledgeBase']['knowledgeBaseId']
+                        print(f'Knowledge Base created: {kb_id} (name: {attempt_name})')
+                        break
+                    except bedrock.exceptions.ConflictException:
+                        print(f'Name conflict for {attempt_name}, trying next...')
+                        continue
+
+                if not kb_id:
+                    raise Exception('Failed to create KB after retries')
 
                 # Wait for KB to become ACTIVE
                 for _ in range(30):
