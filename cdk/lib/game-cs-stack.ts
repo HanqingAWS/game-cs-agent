@@ -280,11 +280,12 @@ export class GameCsAgentStack extends cdk.Stack {
     // 然后在 agent Lambda 中，需要从 API Gateway 事件中提取用户的 JWT token
     // 并将其传递给 MCP 客户端作为 Bearer token
 
-    // ========== Strands Agent Lambda ==========
-    const agentFunction = new lambda.Function(this, 'AgentFunction', {
+    // ========== Strands Agent Lambda (PythonFunction for auto dependency bundling) ==========
+    const agentFunction = new PythonFunction(this, 'AgentFunction', {
       runtime: lambda.Runtime.PYTHON_3_12,
-      handler: 'index.lambda_handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../../lambda/agent')),
+      handler: 'lambda_handler',
+      entry: path.join(__dirname, '../../lambda/agent'),
+      index: 'index.py',
       timeout: cdk.Duration.minutes(5),
       memorySize: 1024,
       environment: {
