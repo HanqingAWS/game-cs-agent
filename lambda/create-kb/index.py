@@ -157,6 +157,14 @@ def handler(event, context):
             kb_id = kb['knowledgeBase']['knowledgeBaseId']
             print(f'Knowledge Base created: {kb_id}')
 
+            # Wait for KB to become ACTIVE
+            for _ in range(30):
+                kb_status = bedrock.get_knowledge_base(knowledgeBaseId=kb_id)['knowledgeBase']['status']
+                print(f'KB status: {kb_status}')
+                if kb_status == 'ACTIVE':
+                    break
+                time.sleep(5)
+
             # Step 5: Create S3 Data Source
             ds = bedrock.create_data_source(
                 knowledgeBaseId=kb_id,
