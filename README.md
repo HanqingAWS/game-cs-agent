@@ -202,48 +202,26 @@ game-cs-agent/
 
 ### 部署步骤
 
-#### 方式一: 一键部署 (推荐)
+> **重要**: 请使用 `deploy.sh` 一键部署。该脚本会自动完成所有配置，包括生成前端所需的 `config.js` 文件。手动执行 `cdk deploy` 不会生成此文件，会导致前端无法正常工作。
 
 ```bash
 # 1. 克隆项目
 git clone https://github.com/HanqingAWS/game-cs-agent.git
 cd game-cs-agent
 
-# 2. 运行部署脚本
+# 2. 一键部署
 ./deploy.sh
 ```
 
 部署脚本会自动完成以下操作：
-- ✅ 检查必要工具
+- ✅ 检查必要工具 (Node.js, npm, AWS CLI)
 - ✅ 安装 CDK 依赖
 - ✅ Bootstrap CDK (首次使用)
-- ✅ 部署所有 AWS 资源
+- ✅ 部署所有 AWS 资源 (Lambda, API Gateway, Cognito, Bedrock KB, AOSS, CloudFront 等)
 - ✅ 创建测试用户
-- ✅ 初始化测试数据
-- ✅ 生成前端配置文件
-- ✅ 输出访问信息
-
-#### 方式二: 手动部署 (支持指定区域)
-
-```bash
-# 1. 安装 CDK 依赖
-cd cdk
-npm install
-
-# 2. 编译 TypeScript
-npm run build
-
-# 3. Bootstrap CDK (首次使用，替换为目标区域)
-npx cdk bootstrap aws://YOUR_ACCOUNT_ID/us-west-2
-
-# 4. 部署 (通过 CDK_DEPLOY_REGION 指定区域，默认 us-east-1)
-CDK_DEPLOY_REGION=us-west-2 npx cdk deploy --require-approval never
-
-# 5. 生成前端配置文件 (deploy.sh 会自动处理，手动部署需要手动生成)
-# 从 Stack Outputs 获取 UserPoolId、UserPoolClientId、ApiUrl，写入 config.js:
-# window.APP_CONFIG = { userPoolId: '...', clientId: '...', apiUrl: '...' };
-# 上传到 S3 website bucket
-```
+- ✅ 初始化 DynamoDB 测试数据
+- ✅ 生成前端配置文件 (`config.js`)
+- ✅ 输出访问地址和测试账号
 
 ### 部署时间
 
