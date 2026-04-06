@@ -230,10 +230,11 @@ export class GameCsAgentStack extends cdk.Stack {
     // ========== AgentCore Runtime (Strands Agent) ==========
     const agentRuntime = new agentcore.Runtime(this, 'AgentRuntime', {
       runtimeName: 'game_cs_agent_runtime',
-      agentRuntimeArtifact: agentcore.AgentRuntimeArtifact.fromAsset(
-        path.join(__dirname, '../../runtime'),
-        { platform: ecr_assets.Platform.LINUX_ARM64 },
-      ),
+      agentRuntimeArtifact: agentcore.AgentRuntimeArtifact.fromCodeAsset({
+        path: path.join(__dirname, '../../runtime'),
+        runtime: agentcore.AgentCoreRuntime.PYTHON_3_12,
+        entrypoint: ['python', 'agent_app.py'],
+      }),
       environmentVariables: {
         KNOWLEDGE_BASE_ID: knowledgeBaseId,
         AGENTCORE_GATEWAY_URL: agentcoreGatewayUrl,
