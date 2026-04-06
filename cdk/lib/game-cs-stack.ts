@@ -307,8 +307,12 @@ export class GameCsAgentStack extends cdk.Stack {
     // ALB security group - restrict to CloudFront IPs only
     const albSg = fargateService.loadBalancer.connections.securityGroups[0];
     // Remove default allow-all and add CloudFront prefix list
+    // CloudFront managed prefix list - lookup by name
+    const cfPrefixList = ec2.PrefixList.fromLookup(this, 'CloudFrontPrefixList', {
+      prefixListName: 'com.amazonaws.global.cloudfront.origin-facing',
+    });
     albSg.addIngressRule(
-      ec2.Peer.prefixList('com.amazonaws.global.cloudfront.origin-facing'),
+      ec2.Peer.prefixList(cfPrefixList.prefixListId),
       ec2.Port.tcp(80),
       'Allow CloudFront only',
     );
