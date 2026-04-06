@@ -11,6 +11,7 @@ import * as cr from 'aws-cdk-lib/custom-resources';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as ecr_assets from 'aws-cdk-lib/aws-ecr-assets';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as ecsPatterns from 'aws-cdk-lib/aws-ecs-patterns';
@@ -230,8 +231,9 @@ export class GameCsAgentStack extends cdk.Stack {
     // ========== AgentCore Runtime (Strands Agent) ==========
     const agentRuntime = new agentcore.Runtime(this, 'AgentRuntime', {
       runtimeName: 'game_cs_agent_runtime',
-      agentRuntimeArtifact: agentcore.AgentRuntimeArtifact.fromImageUri(
-        `${this.account}.dkr.ecr.${this.region}.amazonaws.com/game-cs-runtime:latest`,
+      agentRuntimeArtifact: agentcore.AgentRuntimeArtifact.fromEcrRepository(
+        ecr.Repository.fromRepositoryName(this, 'RuntimeRepo', 'game-cs-runtime'),
+        'latest',
       ),
       environmentVariables: {
         KNOWLEDGE_BASE_ID: knowledgeBaseId,
