@@ -1,29 +1,10 @@
 """
 Custom Resource Lambda: Create Bedrock Knowledge Base with AOSS vector store.
-Handles Create/Update/Delete lifecycle events from CloudFormation.
+Used as onEventHandler for CDK cr.Provider - must RETURN dict, not send HTTP response.
 """
 import boto3
 import json
 import time
-import urllib3
-
-# Send CloudFormation response manually (no cfnresponse dependency needed)
-http = urllib3.PoolManager()
-
-
-def send_cfn_response(event, context, status, data=None, physical_id=None):
-    body = json.dumps({
-        'Status': status,
-        'Reason': f'See CloudWatch Log Stream: {context.log_stream_name}',
-        'PhysicalResourceId': physical_id or context.log_stream_name,
-        'StackId': event['StackId'],
-        'RequestId': event['RequestId'],
-        'LogicalResourceId': event['LogicalResourceId'],
-        'NoEcho': False,
-        'Data': data or {},
-    })
-    http.request('PUT', event['ResponseURL'], body=body,
-                 headers={'Content-Type': '', 'Content-Length': str(len(body))})
 
 
 def ensure_aoss_access(collection_name, bedrock_role_arn, lambda_role_arn):
@@ -184,8 +165,10 @@ def handler(event, context):
                 if status in ('COMPLETE', 'FAILED'):
                     break
 
-            send_cfn_response(event, context, 'SUCCESS',
-                              {'KnowledgeBaseId': kb_id, 'DataSourceId': ds_id}, kb_id)
+            return {
+                'PhysicalResourceId': kb_id,
+                'Data': {'KnowledgeBaseId': kb_id, 'DataSourceId': ds_id},
+            }
 
         elif event['RequestType'] == 'Delete':
             kb_id = event.get('PhysicalResourceId', '')
@@ -198,13 +181,14 @@ def handler(event, context):
                     print(f'Deleted KB: {kb_id}')
                 except Exception as e:
                     print(f'Delete KB error (ignored): {e}')
-            send_cfn_response(event, context, 'SUCCESS', {}, kb_id)
+            return {'PhysicalResourceId': kb_id}
 
         else:  # Update
-            send_cfn_response(event, context, 'SUCCESS',
-                              {'KnowledgeBaseId': event.get('PhysicalResourceId', '')},
-                              event.get('PhysicalResourceId', ''))
+            return {
+                'PhysicalResourceId': event.get('PhysicalResourceId', ''),
+                'Data': {'KnowledgeBaseId': event.get('PhysicalResourceId', '')},
+            }
 
     except Exception as e:
         print(f'ERROR: {e}')
-        send_cfn_response(event, context, 'FAILED', {'Error': str(e)})
+        raise  # cr.Provider framework will catch and send FAILED response
