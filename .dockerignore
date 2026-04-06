@@ -1,0 +1,6 @@
+cdk/cdk.out
+cdk/node_modules
+.git
+lambda
+runtime
+*.md

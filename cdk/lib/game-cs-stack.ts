@@ -229,7 +229,7 @@ export class GameCsAgentStack extends cdk.Stack {
 
     // ========== AgentCore Runtime (Strands Agent) ==========
     const agentRuntime = new agentcore.Runtime(this, 'AgentRuntime', {
-      runtimeName: 'game-cs-agent-runtime',
+      runtimeName: 'game_cs_agent_runtime',
       agentRuntimeArtifact: agentcore.AgentRuntimeArtifact.fromAsset(
         path.join(__dirname, '../../runtime'),
       ),
@@ -304,9 +304,14 @@ export class GameCsAgentStack extends cdk.Stack {
       healthyHttpCodes: '200',
     });
 
-    // ALB security group - restrict to CloudFront IPs
-    // CloudFront uses AWS managed prefix list
+    // ALB security group - restrict to CloudFront IPs only
     const albSg = fargateService.loadBalancer.connections.securityGroups[0];
+    // Remove default allow-all and add CloudFront prefix list
+    albSg.addIngressRule(
+      ec2.Peer.prefixList('com.amazonaws.global.cloudfront.origin-facing'),
+      ec2.Port.tcp(80),
+      'Allow CloudFront only',
+    );
 
     // ========== CloudFront (CDN, optional) ==========
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
