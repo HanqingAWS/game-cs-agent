@@ -77,7 +77,8 @@ async def chat(request: Request):
         # Get auth token (Cognito JWT)
         auth_header = request.headers.get('Authorization', '')
 
-        session_id = body.get('session_id', 'default')
+        import uuid
+        session_id = body.get('session_id', str(uuid.uuid4()))
 
         async def stream_agent():
             """Stream response from AgentCore Runtime"""
