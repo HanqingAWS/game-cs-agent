@@ -5,8 +5,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY agent_app.py .
+COPY main.py .
 
 EXPOSE 8080
 
-CMD ["python", "agent_app.py"]
+CMD ["python", "main.py"]
