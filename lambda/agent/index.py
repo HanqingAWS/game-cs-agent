@@ -25,7 +25,7 @@ AGENTCORE_GATEWAY_URL = os.environ.get('AGENTCORE_GATEWAY_URL')
 REGION = os.environ.get('AWS_REGION_NAME', 'us-east-1')
 MODEL_ID = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
 
-SYSTEM_PROMPT = """你是 Whiteout Survival（冰封末日）的客服助手，专门为玩家提供游戏帮助。
+SYSTEM_PROMPT = """你是 Whiteout Survival（寒霜启示录）的客服助手，专门为玩家提供游戏帮助。
 
 你的职责包括：
 1. 回答 Whiteout Survival 游戏相关问题（通过知识库工具）
