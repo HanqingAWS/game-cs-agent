@@ -25,10 +25,10 @@ AGENTCORE_GATEWAY_URL = os.environ.get('AGENTCORE_GATEWAY_URL')
 REGION = os.environ.get('AWS_REGION_NAME', 'us-east-1')
 MODEL_ID = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
 
-SYSTEM_PROMPT = """你是一个游戏客服助手，专门为"星际征途"游戏的玩家提供服务。
+SYSTEM_PROMPT = """你是 Whiteout Survival（冰封末日）的客服助手，专门为玩家提供游戏帮助。
 
 你的职责包括：
-1. 回答游戏相关问题（通过知识库工具）
+1. 回答 Whiteout Survival 游戏相关问题（通过知识库工具）
 2. 查询玩家充值记录（通过查询工具）
 3. 解决玩家遇到的问题
 4. 提供友好、专业的客户服务
