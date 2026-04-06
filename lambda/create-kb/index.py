@@ -126,10 +126,22 @@ def handler(event, context):
                     old_id = existing['knowledgeBaseId']
                     old_status = existing['status']
                     print(f'Found existing KB: {old_id} (status: {old_status})')
-                    if old_status == 'ACTIVE':
-                        print(f'Reusing existing ACTIVE KB: {old_id}')
+                    if old_status in ('ACTIVE', 'DELETE_UNSUCCESSFUL'):
+                        print(f'Reusing existing KB ({old_status}): {old_id}')
                         kb_id = old_id
                         break
+                    elif old_status == 'CREATING':
+                        # Wait for it to finish creating
+                        for _ in range(30):
+                            time.sleep(5)
+                            check = bedrock.get_knowledge_base(knowledgeBaseId=old_id)
+                            s = check['knowledgeBase']['status']
+                            if s != 'CREATING':
+                                if s == 'ACTIVE':
+                                    kb_id = old_id
+                                break
+                        if kb_id:
+                            break
                     else:
                         # Try to delete non-ACTIVE KB
                         try:
