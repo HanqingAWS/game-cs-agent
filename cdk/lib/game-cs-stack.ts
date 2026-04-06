@@ -233,7 +233,7 @@ export class GameCsAgentStack extends cdk.Stack {
       agentRuntimeArtifact: agentcore.AgentRuntimeArtifact.fromCodeAsset({
         path: path.join(__dirname, '../../runtime'),
         runtime: agentcore.AgentCoreRuntime.PYTHON_3_12,
-        entrypoint: ['python', 'agent_app.py'],
+        entrypoint: ['main.py'],
       }),
       environmentVariables: {
         KNOWLEDGE_BASE_ID: knowledgeBaseId,
