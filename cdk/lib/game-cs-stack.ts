@@ -358,7 +358,6 @@ export class GameCsAgentStack extends cdk.Stack {
 
     // ========== Frontend S3 Bucket + CloudFront ==========
     const websiteBucket = new s3.Bucket(this, 'WebsiteBucket', {
-      websiteIndexDocument: 'index.html',
       publicReadAccess: false,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
