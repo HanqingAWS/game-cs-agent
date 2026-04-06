@@ -1,5 +1,7 @@
 # 游戏智能客服 Demo - 星际征途
 
+> **Fork 说明**: 本仓库 fork 自 [f1shb0t/game-cs-agent](https://github.com/f1shb0t/game-cs-agent)，修复了原始 CDK 代码中 Bedrock Knowledge Base 自动创建部分的多个 bug，支持一键部署到任意 AWS 区域。
+
 基于 AWS Bedrock 和 Strands Agent 的游戏客服 AI Agent 演示项目。
 
 ## 🎯 项目概述
@@ -153,6 +155,8 @@ game-cs-agent/
 │   ├── agent/                    # Strands Agent Lambda
 │   │   ├── index.py              # Agent 主逻辑
 │   │   └── requirements.txt
+│   ├── create-kb/                # Knowledge Base 创建 Lambda (Custom Resource)
+│   │   └── index.py              # AOSS Index + KB + DataSource 创建
 │   ├── recharge-query/           # 充值查询 Lambda (MCP 工具)
 │   │   ├── index.py
 │   │   └── requirements.txt
@@ -202,7 +206,7 @@ game-cs-agent/
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/yourusername/game-cs-agent.git
+git clone https://github.com/HanqingAWS/game-cs-agent.git
 cd game-cs-agent
 
 # 2. 运行部署脚本
@@ -219,7 +223,7 @@ cd game-cs-agent
 - ✅ 生成前端配置文件
 - ✅ 输出访问信息
 
-#### 方式二: 手动部署
+#### 方式二: 手动部署 (支持指定区域)
 
 ```bash
 # 1. 安装 CDK 依赖
@@ -229,24 +233,27 @@ npm install
 # 2. 编译 TypeScript
 npm run build
 
-# 3. Bootstrap CDK (首次使用)
-npx cdk bootstrap aws://YOUR_ACCOUNT_ID/us-east-1
+# 3. Bootstrap CDK (首次使用，替换为目标区域)
+npx cdk bootstrap aws://YOUR_ACCOUNT_ID/us-west-2
 
-# 4. 部署
-npx cdk deploy
+# 4. 部署 (通过 CDK_DEPLOY_REGION 指定区域，默认 us-east-1)
+CDK_DEPLOY_REGION=us-west-2 npx cdk deploy --require-approval never
 
-# 5. 获取输出并配置前端
-# 将 Stack Outputs 中的值填入 frontend/config.js
+# 5. 生成前端配置文件 (deploy.sh 会自动处理，手动部署需要手动生成)
+# 从 Stack Outputs 获取 UserPoolId、UserPoolClientId、ApiUrl，写入 config.js:
+# window.APP_CONFIG = { userPoolId: '...', clientId: '...', apiUrl: '...' };
+# 上传到 S3 website bucket
 ```
 
 ### 部署时间
 
-预计部署时间：**10-15 分钟**
+预计部署时间：**约 15 分钟**
 
 部署过程包括：
 - Lambda 函数打包和部署 (~2 分钟)
-- Bedrock Knowledge Base 创建和数据导入 (~3-5 分钟)
-- CloudFront 分发创建 (~5-10 分钟)
+- OpenSearch Serverless Collection 创建 (~8 分钟)
+- Bedrock Knowledge Base 创建和数据导入 (~3 分钟)
+- CloudFront 分发创建 (~2 分钟)
 - 其他资源创建 (~2 分钟)
 
 ### 部署后的输出
@@ -487,7 +494,7 @@ npx cdk destroy
 如果需要删除 CDK Bootstrap 资源：
 
 ```bash
-aws cloudformation delete-stack --stack-name CDKToolkit --region us-east-1
+aws cloudformation delete-stack --stack-name CDKToolkit --region us-west-2  # 替换为你的部署区域
 ```
 
 **注意**: 删除 CDKToolkit 会影响同区域的其他 CDK 项目。
@@ -527,6 +534,20 @@ aws cloudformation delete-stack --stack-name CDKToolkit --region us-east-1
    - 实现智能缓存策略
    - 根据流量选择合适的 AI 模型
 
+## 🔨 Fork 修复记录
+
+本 Fork 修复了原始仓库中 Bedrock Knowledge Base CDK 部署的以下问题：
+
+| 问题 | 原因 | 修复方案 |
+|------|------|---------|
+| AOSS Collection ARN 无法解析 | Python inline 代码中使用 `${AWS::Region}` CloudFormation 语法 | 改为 CDK 原生 `AWS::OpenSearchServerless::Collection` 资源 |
+| iam:PassRole 权限缺失 | CreateKbFunctionRole 未授权 PassRole | 添加 inline policy |
+| AOSS Collection 不存在 | CDK 中未创建 Collection 资源 | 添加 Collection + 加密/网络/访问策略 |
+| cfnresponse 模块缺失 | `Code.fromAsset` 不自动包含 cfnresponse | 将依赖安装到 Lambda 目录 |
+| AOSS 403 Forbidden | urllib3 手动 SigV4 签名不兼容 AOSS | 改用 `opensearch-py` + `requests-aws4auth` |
+| cr.Provider 返回值格式错误 | Lambda 直接发 HTTP response 而非返回 dict | 修改为返回 `{PhysicalResourceId, Data}` dict |
+| 区域硬编码 | `app.ts` 固定 us-east-1 | 改为 `CDK_DEPLOY_REGION` 环境变量，支持任意区域 |
+
 ## 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request！
@@ -537,7 +558,7 @@ MIT License
 
 ## 👥 作者
 
-Claude Code Demo Project
+原始项目: [f1shb0t/game-cs-agent](https://github.com/f1shb0t/game-cs-agent)
 
 ## 📧 联系方式
 
