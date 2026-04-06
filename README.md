@@ -1,4 +1,4 @@
-# 游戏智能客服 Demo - 星际征途
+# 游戏智能客服 Demo - Whiteout Survival（寒霜启示录）
 
 > **Fork 说明**: 本仓库 fork 自 [f1shb0t/game-cs-agent](https://github.com/f1shb0t/game-cs-agent)，修复了原始 CDK 代码中 Bedrock Knowledge Base 自动创建部分的多个 bug，支持一键部署到任意 AWS 区域。
 
@@ -279,10 +279,10 @@ cd game-cs-agent
 
 #### 测试知识库检索
 ```
-Q: 什么是星际征途？
-Q: 如何升级星舰？
-Q: 支持哪些充值方式？
-Q: 游戏卡顿怎么办？
+Q: 如何迁城到联盟领地？
+Q: 如何移民到其他王国？
+Q: 什么时候可以解锁扫荡功能？
+Q: 火晶建筑和部队有什么不同？
 ```
 
 #### 测试工具调用
