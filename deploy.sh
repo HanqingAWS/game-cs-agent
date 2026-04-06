@@ -126,11 +126,11 @@ API_URL=$(aws cloudformation describe-stacks \
     --query 'Stacks[0].Outputs[?OutputKey==`ApiUrl`].OutputValue' \
     --output text)
 
-# 找到 S3 Website Bucket
+# 找到 S3 Website Bucket (WebsiteBucket75C24D94 is the CDK-generated logical ID)
 WEBSITE_BUCKET=$(aws cloudformation describe-stack-resources \
     --stack-name GameCsAgentStack \
     --region ${DEPLOY_REGION} \
-    --query 'StackResources[?LogicalResourceId==`WebsiteBucket`].PhysicalResourceId' \
+    --query 'StackResources[?starts_with(LogicalResourceId, `WebsiteBucket`)].PhysicalResourceId' \
     --output text)
 
 # 创建前端配置文件并上传到 S3
