@@ -89,11 +89,20 @@ def create_tools():
     return tools
 
 
-# Initialize app and agent
+# Initialize app only (lightweight)
 app = BedrockAgentCoreApp()
-model = BedrockModel(model_id=MODEL_ID, region=REGION)
-tools = create_tools()
-agent = Agent(model=model, system_prompt=SYSTEM_PROMPT, tools=tools)
+
+# Lazy-init agent on first invocation to avoid 30s init timeout
+_agent = None
+
+
+def get_agent():
+    global _agent
+    if _agent is None:
+        model = BedrockModel(model_id=MODEL_ID, region=REGION)
+        tools = create_tools()
+        _agent = Agent(model=model, system_prompt=SYSTEM_PROMPT, tools=tools)
+    return _agent
 
 
 @app.entrypoint
@@ -104,6 +113,7 @@ async def invoke(payload):
         yield {'type': 'error', 'content': 'Missing prompt/message in payload'}
         return
 
+    agent = get_agent()
     stream = agent.stream_async(user_message)
     async for event in stream:
         yield event
