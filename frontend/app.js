@@ -339,7 +339,7 @@ function handleStreamEvent(event, workflowDiv, responseDiv, updateResponse) {
         case 'tool_result':
             const toolResultItem = document.createElement('div');
             toolResultItem.className = 'workflow-item tool-result';
-            toolResultItem.innerHTML = `✅ 工具结果:<br><pre>${JSON.stringify(content, null, 2)}</pre>`;
+            toolResultItem.innerHTML = `✅ 工具结果:<br><pre style="white-space: pre-wrap; word-break: break-word;">${typeof content === 'string' ? content : JSON.stringify(content, null, 2)}</pre>`;
             workflowDiv.appendChild(toolResultItem);
             break;
 
