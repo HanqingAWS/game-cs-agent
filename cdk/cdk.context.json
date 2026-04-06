@@ -4,5 +4,11 @@
     "us-west-2b",
     "us-west-2c",
     "us-west-2d"
+  ],
+  "cc-api-provider:account=044324713311:expectedMatchCount=exactly-one:propertiesToReturn.0=PrefixListId:propertyMatch.PrefixListName=com.amazonaws.global.cloudfront.origin-facing:region=us-west-2:typeName=AWS$:$:EC2$:$:PrefixList": [
+    {
+      "PrefixListId": "pl-82a045eb",
+      "Identifier": "pl-82a045eb"
+    }
   ]
 }
