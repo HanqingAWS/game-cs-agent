@@ -119,53 +119,62 @@ def handler(event, context):
             kb_name = props['KnowledgeBaseName']
 
             # Check if KB with same name exists (orphaned from previous failed deploy)
+            kb_id = None
             existing_kbs = bedrock.list_knowledge_bases()
             for existing in existing_kbs.get('knowledgeBaseSummaries', []):
                 if existing['name'] == kb_name:
                     old_id = existing['knowledgeBaseId']
-                    print(f'Found existing KB with same name: {old_id} (status: {existing["status"]}), deleting...')
-                    try:
-                        for ds in bedrock.list_data_sources(knowledgeBaseId=old_id).get('dataSourceSummaries', []):
-                            bedrock.delete_data_source(knowledgeBaseId=old_id, dataSourceId=ds['dataSourceId'])
-                            time.sleep(5)
-                        bedrock.delete_knowledge_base(knowledgeBaseId=old_id)
-                        time.sleep(10)
-                    except Exception as del_err:
-                        print(f'Delete old KB warning: {del_err}')
+                    old_status = existing['status']
+                    print(f'Found existing KB: {old_id} (status: {old_status})')
+                    if old_status == 'ACTIVE':
+                        print(f'Reusing existing ACTIVE KB: {old_id}')
+                        kb_id = old_id
+                        break
+                    else:
+                        # Try to delete non-ACTIVE KB
+                        try:
+                            for ds in bedrock.list_data_sources(knowledgeBaseId=old_id).get('dataSourceSummaries', []):
+                                bedrock.delete_data_source(knowledgeBaseId=old_id, dataSourceId=ds['dataSourceId'])
+                                time.sleep(5)
+                            bedrock.delete_knowledge_base(knowledgeBaseId=old_id)
+                            time.sleep(15)
+                        except Exception as del_err:
+                            print(f'Delete old KB warning (non-fatal): {del_err}')
 
-            kb = bedrock.create_knowledge_base(
-                name=kb_name,
-                description='Game Customer Service FAQ Knowledge Base',
-                roleArn=bedrock_role_arn,
-                knowledgeBaseConfiguration={
-                    'type': 'VECTOR',
-                    'vectorKnowledgeBaseConfiguration': {
-                        'embeddingModelArn': f'arn:aws:bedrock:{region}::foundation-model/cohere.embed-multilingual-v3',
-                    },
-                },
-                storageConfiguration={
-                    'type': 'OPENSEARCH_SERVERLESS',
-                    'opensearchServerlessConfiguration': {
-                        'collectionArn': collection_arn,
-                        'vectorIndexName': 'game-cs-index',
-                        'fieldMapping': {
-                            'vectorField': 'vector',
-                            'textField': 'AMAZON_BEDROCK_TEXT_CHUNK',
-                            'metadataField': 'AMAZON_BEDROCK_METADATA',
+            if not kb_id:
+                kb = bedrock.create_knowledge_base(
+                    name=kb_name,
+                    description='Game Customer Service FAQ Knowledge Base',
+                    roleArn=bedrock_role_arn,
+                    knowledgeBaseConfiguration={
+                        'type': 'VECTOR',
+                        'vectorKnowledgeBaseConfiguration': {
+                            'embeddingModelArn': f'arn:aws:bedrock:{region}::foundation-model/cohere.embed-multilingual-v3',
                         },
                     },
-                },
-            )
-            kb_id = kb['knowledgeBase']['knowledgeBaseId']
-            print(f'Knowledge Base created: {kb_id}')
+                    storageConfiguration={
+                        'type': 'OPENSEARCH_SERVERLESS',
+                        'opensearchServerlessConfiguration': {
+                            'collectionArn': collection_arn,
+                            'vectorIndexName': 'game-cs-index',
+                            'fieldMapping': {
+                                'vectorField': 'vector',
+                                'textField': 'AMAZON_BEDROCK_TEXT_CHUNK',
+                                'metadataField': 'AMAZON_BEDROCK_METADATA',
+                            },
+                        },
+                    },
+                )
+                kb_id = kb['knowledgeBase']['knowledgeBaseId']
+                print(f'Knowledge Base created: {kb_id}')
 
-            # Wait for KB to become ACTIVE
-            for _ in range(30):
-                kb_status = bedrock.get_knowledge_base(knowledgeBaseId=kb_id)['knowledgeBase']['status']
-                print(f'KB status: {kb_status}')
-                if kb_status == 'ACTIVE':
-                    break
-                time.sleep(5)
+                # Wait for KB to become ACTIVE
+                for _ in range(30):
+                    kb_status = bedrock.get_knowledge_base(knowledgeBaseId=kb_id)['knowledgeBase']['status']
+                    print(f'KB status: {kb_status}')
+                    if kb_status == 'ACTIVE':
+                        break
+                    time.sleep(5)
 
             # Step 5: Create S3 Data Source
             ds = bedrock.create_data_source(
