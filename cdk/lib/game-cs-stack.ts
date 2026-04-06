@@ -244,8 +244,20 @@ export class GameCsAgentStack extends cdk.Stack {
       protocolConfiguration: agentcore.ProtocolType.HTTP,
     });
 
-    // Grant Bedrock permissions to Runtime
-    agentRuntime.grantInvoke(new iam.ServicePrincipal('ecs-tasks.amazonaws.com'));
+    // Grant Bedrock permissions to Runtime execution role
+    agentRuntime.role.addToPrincipalPolicy(new iam.PolicyStatement({
+      actions: [
+        'bedrock:InvokeModel',
+        'bedrock:InvokeModelWithResponseStream',
+        'bedrock:Converse',
+        'bedrock:ConverseStream',
+        'bedrock:Retrieve',
+        'bedrock:RetrieveAndGenerate',
+      ],
+      resources: ['*'],
+    }));
+    // Grant Gateway invoke
+    gateway.grantInvoke(agentRuntime.role);
 
     const runtimeEndpoint = agentRuntime.addEndpoint('production');
 
