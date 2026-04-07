@@ -66,35 +66,47 @@ def parse_runtime_sse(raw_data: str):
             # Raw string event from Strands (repr of dict)
             continue
 
-        # Skip internal events
-        if isinstance(data, dict):
-            # Text delta
-            event = data.get('event', {})
-            if 'contentBlockDelta' in event:
-                delta = event['contentBlockDelta'].get('delta', {})
-                text = delta.get('text', '')
-                if text:
-                    yield json.dumps({'type': 'text', 'content': text}, ensure_ascii=False)
+        if not isinstance(data, dict):
+            continue
 
-            # Tool use start
-            elif 'contentBlockStart' in event:
-                cb = event['contentBlockStart'].get('contentBlock', {})
-                if 'toolUse' in cb:
-                    tool_name = cb['toolUse'].get('name', 'unknown')
-                    yield json.dumps({'type': 'tool_call', 'content': {'tool': tool_name, 'input': {}}}, ensure_ascii=False)
+        event = data.get('event', {})
 
-            # Tool result
-            elif 'contentBlockStop' in event:
-                pass  # handled by next text block
+        # Text delta
+        if 'contentBlockDelta' in event:
+            delta = event['contentBlockDelta'].get('delta', {})
+            text = delta.get('text', '')
+            if text:
+                yield json.dumps({'type': 'text', 'content': text}, ensure_ascii=False)
 
-            # Error
-            elif 'error' in data:
-                yield json.dumps({'type': 'error', 'content': data['error']}, ensure_ascii=False)
+        # Tool use start (from contentBlockStart.start.toolUse)
+        elif 'contentBlockStart' in event:
+            start = event['contentBlockStart'].get('start', {})
+            if 'toolUse' in start:
+                tool_name = start['toolUse'].get('name', 'unknown')
+                yield json.dumps({'type': 'tool_call', 'content': {'tool': tool_name, 'input': {}}}, ensure_ascii=False)
 
-            # Force stop
-            elif 'force_stop' in data:
-                reason = data.get('force_stop_reason', 'Agent stopped')
-                yield json.dumps({'type': 'error', 'content': reason}, ensure_ascii=False)
+        # Tool result (from message-level events)
+        elif 'message' in data:
+            msg = data['message']
+            if isinstance(msg, dict):
+                for block in msg.get('content', []):
+                    if isinstance(block, dict) and 'toolResult' in block:
+                        tr = block['toolResult']
+                        result_text = ''
+                        for c in tr.get('content', []):
+                            if isinstance(c, dict) and 'text' in c:
+                                result_text += c['text']
+                        if result_text:
+                            yield json.dumps({'type': 'tool_result', 'content': result_text[:500]}, ensure_ascii=False)
+
+        # Error
+        elif 'error' in data:
+            yield json.dumps({'type': 'error', 'content': data['error']}, ensure_ascii=False)
+
+        # Force stop
+        elif 'force_stop' in data:
+            reason = data.get('force_stop_reason', 'Agent stopped')
+            yield json.dumps({'type': 'error', 'content': reason}, ensure_ascii=False)
 
 
 @app.post('/chat')
