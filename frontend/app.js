@@ -282,7 +282,8 @@ async function streamChat(message, messageElement) {
                             try {
                                 const event = JSON.parse(data);
                                 handleStreamEvent(event, workflowContent, responseDiv, (text) => {
-                                    responseText = text;
+                                    responseText += text;  // accumulate tokens
+                                    responseDiv.innerHTML = formatMessage(responseText);
                                 });
                             } catch (e) {
                                 console.error('Parse error:', e);
@@ -344,8 +345,7 @@ function handleStreamEvent(event, workflowDiv, responseDiv, updateResponse) {
             break;
 
         case 'text':
-            responseDiv.innerHTML = formatMessage(content);
-            updateResponse(content);
+            updateResponse(content);  // accumulate token
             break;
 
         case 'done':
