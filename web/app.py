@@ -128,16 +128,66 @@ async def chat(request: Request):
                     payload=json.dumps({'prompt': message}).encode(),
                 )
 
-                # Read streaming body
+                # Stream line-by-line from Runtime (true streaming!)
                 resp_body = response.get('response', b'')
-                if hasattr(resp_body, 'read'):
-                    raw = resp_body.read().decode('utf-8')
-                else:
-                    raw = str(resp_body)
+                buffer = ''
+                for chunk in resp_body.iter_chunks():
+                    if isinstance(chunk, tuple):
+                        chunk = chunk[0]  # (bytes, content_length)
+                    text = chunk.decode('utf-8') if isinstance(chunk, bytes) else str(chunk)
+                    buffer += text
 
-                # Parse and convert events
-                for event_json in parse_runtime_sse(raw):
-                    yield f"data: {event_json}\n\n"
+                    # Process complete lines
+                    while '\n' in buffer:
+                        line, buffer = buffer.split('\n', 1)
+                        line = line.strip()
+                        if not line.startswith('data: '):
+                            continue
+                        try:
+                            data = json.loads(line[6:])
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+
+                        if not isinstance(data, dict):
+                            continue
+
+                        event = data.get('event', {})
+
+                        # Text delta
+                        if 'contentBlockDelta' in event:
+                            delta = event['contentBlockDelta'].get('delta', {})
+                            t = delta.get('text', '')
+                            if t:
+                                yield f'data: {json.dumps({"type": "text", "content": t}, ensure_ascii=False)}\n\n'
+
+                        # Tool use start
+                        elif 'contentBlockStart' in event:
+                            start = event['contentBlockStart'].get('start', {})
+                            if 'toolUse' in start:
+                                tool_name = start['toolUse'].get('name', 'unknown')
+                                yield f'data: {json.dumps({"type": "tool_call", "content": {"tool": tool_name, "input": {}}}, ensure_ascii=False)}\n\n'
+
+                        # Tool result (from message-level)
+                        elif 'message' in data:
+                            msg = data['message']
+                            if isinstance(msg, dict):
+                                for block in msg.get('content', []):
+                                    if isinstance(block, dict) and 'toolResult' in block:
+                                        tr = block['toolResult']
+                                        result_text = ''
+                                        for c in tr.get('content', []):
+                                            if isinstance(c, dict) and 'text' in c:
+                                                result_text += c['text']
+                                        if result_text:
+                                            yield f'data: {json.dumps({"type": "tool_result", "content": result_text[:500]}, ensure_ascii=False)}\n\n'
+
+                        # Error
+                        elif 'error' in data:
+                            yield f'data: {json.dumps({"type": "error", "content": data["error"]}, ensure_ascii=False)}\n\n'
+
+                        # Force stop
+                        elif 'force_stop' in data:
+                            yield f'data: {json.dumps({"type": "error", "content": data.get("force_stop_reason", "Agent stopped")}, ensure_ascii=False)}\n\n'
 
                 yield 'data: {"type": "done", "content": ""}\n\n'
 
