@@ -130,11 +130,21 @@ async def chat(request: Request):
 
                 # Stream line-by-line from Runtime (true streaming!)
                 resp_body = response.get('response', b'')
+                byte_buffer = b''
                 buffer = ''
                 for chunk in resp_body.iter_chunks():
                     if isinstance(chunk, tuple):
-                        chunk = chunk[0]  # (bytes, content_length)
-                    text = chunk.decode('utf-8') if isinstance(chunk, bytes) else str(chunk)
+                        chunk = chunk[0]
+                    if isinstance(chunk, bytes):
+                        byte_buffer += chunk
+                    else:
+                        byte_buffer += chunk.encode('utf-8')
+                    # Decode only complete UTF-8 sequences
+                    try:
+                        text = byte_buffer.decode('utf-8')
+                        byte_buffer = b''
+                    except UnicodeDecodeError:
+                        continue  # wait for more bytes
                     buffer += text
 
                     # Process complete lines
