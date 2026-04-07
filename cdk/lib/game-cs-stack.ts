@@ -233,7 +233,7 @@ export class GameCsAgentStack extends cdk.Stack {
       runtimeName: 'game_cs_agent_runtime',
       agentRuntimeArtifact: agentcore.AgentRuntimeArtifact.fromEcrRepository(
         ecr.Repository.fromRepositoryName(this, 'RuntimeRepo', 'game-cs-runtime'),
-        'v3',
+        'v4',
       ),
       environmentVariables: {
         KNOWLEDGE_BASE_ID: knowledgeBaseId,
