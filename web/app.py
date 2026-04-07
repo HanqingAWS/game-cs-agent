@@ -1,123 +1,143 @@
 """
 Whiteout Survival 智能客服 - Web Service (ECS Fargate)
-FastAPI 应用：静态文件服务 + /chat API 代理到 AgentCore Runtime
+FastAPI: static files + /chat proxy to AgentCore Runtime with SSE streaming
 """
 
 import os
 import json
 import logging
+import uuid
 import boto3
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Config from environment variables (injected by CDK)
 RUNTIME_ARN = os.environ.get('AGENT_RUNTIME_ARN', '')
-RUNTIME_ENDPOINT_ARN = os.environ.get('AGENT_RUNTIME_ENDPOINT_ARN', '')
 REGION = os.environ.get('AWS_REGION_NAME', 'us-west-2')
 COGNITO_USER_POOL_ID = os.environ.get('COGNITO_USER_POOL_ID', '')
 COGNITO_CLIENT_ID = os.environ.get('COGNITO_CLIENT_ID', '')
 
 app = FastAPI(title='Whiteout Survival CS Agent')
+app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['*'], allow_headers=['*'])
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=['*'],
-    allow_methods=['*'],
-    allow_headers=['*'],
-)
-
-# AgentCore Runtime client
 agentcore_client = boto3.client('bedrock-agentcore', region_name=REGION)
-
-
-def generate_config_js():
-    """Generate frontend config.js content from environment variables"""
-    return f"""const AWS_CONFIG = {{
-    userPoolId: '{COGNITO_USER_POOL_ID}',
-    clientId: '{COGNITO_CLIENT_ID}',
-    apiUrl: ''
-}};"""
 
 
 @app.get('/')
 async def index():
-    """Serve frontend index.html"""
-    index_path = '/app/frontend/index.html'
-    if os.path.exists(index_path):
-        return HTMLResponse(open(index_path).read())
+    path = '/app/frontend/index.html'
+    if os.path.exists(path):
+        return HTMLResponse(open(path).read())
     return HTMLResponse('<h1>Whiteout Survival CS Agent</h1>')
 
 
 @app.get('/config.js')
 async def config_js():
-    """Dynamically generated config.js - no more S3 upload issues!"""
     return HTMLResponse(
-        content=generate_config_js(),
+        content=f"const AWS_CONFIG = {{ userPoolId: '{COGNITO_USER_POOL_ID}', clientId: '{COGNITO_CLIENT_ID}', apiUrl: '' }};",
         media_type='application/javascript'
     )
 
 
+def parse_runtime_sse(raw_data: str):
+    """Parse Runtime SSE events and convert to frontend format.
+
+    Runtime returns Strands-native events like:
+      data: {"init_event_loop": true}
+      data: {"event": {"contentBlockDelta": {"delta": {"text": "Hello"}}}}
+      data: {"event": {"contentBlockStart": {"contentBlock": {"toolUse": {"name": "search_kb"}}}}}
+
+    Frontend expects:
+      data: {"type": "text", "content": "Hello"}
+      data: {"type": "tool_call", "content": {"tool": "search_kb"}}
+    """
+    for line in raw_data.split('\n'):
+        line = line.strip()
+        if not line.startswith('data: '):
+            continue
+
+        payload = line[6:]
+        try:
+            data = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            # Raw string event from Strands (repr of dict)
+            continue
+
+        # Skip internal events
+        if isinstance(data, dict):
+            # Text delta
+            event = data.get('event', {})
+            if 'contentBlockDelta' in event:
+                delta = event['contentBlockDelta'].get('delta', {})
+                text = delta.get('text', '')
+                if text:
+                    yield json.dumps({'type': 'text', 'content': text}, ensure_ascii=False)
+
+            # Tool use start
+            elif 'contentBlockStart' in event:
+                cb = event['contentBlockStart'].get('contentBlock', {})
+                if 'toolUse' in cb:
+                    tool_name = cb['toolUse'].get('name', 'unknown')
+                    yield json.dumps({'type': 'tool_call', 'content': {'tool': tool_name, 'input': {}}}, ensure_ascii=False)
+
+            # Tool result
+            elif 'contentBlockStop' in event:
+                pass  # handled by next text block
+
+            # Error
+            elif 'error' in data:
+                yield json.dumps({'type': 'error', 'content': data['error']}, ensure_ascii=False)
+
+            # Force stop
+            elif 'force_stop' in data:
+                reason = data.get('force_stop_reason', 'Agent stopped')
+                yield json.dumps({'type': 'error', 'content': reason}, ensure_ascii=False)
+
+
 @app.post('/chat')
 async def chat(request: Request):
-    """
-    Chat endpoint - proxy to AgentCore Runtime with true SSE streaming.
-    Validates Cognito JWT from Authorization header.
-    """
     try:
         body = await request.json()
         message = body.get('message', '')
         if not message:
             return JSONResponse({'error': 'Missing message'}, status_code=400)
 
-        # Get auth token (Cognito JWT)
-        auth_header = request.headers.get('Authorization', '')
-
-        import uuid
         session_id = body.get('session_id', str(uuid.uuid4()))
 
         async def stream_agent():
-            """Stream response from AgentCore Runtime"""
             try:
-                payload = json.dumps({'prompt': message}).encode()
-
                 response = agentcore_client.invoke_agent_runtime(
                     agentRuntimeArn=RUNTIME_ARN,
+                    qualifier='production',
                     runtimeSessionId=session_id,
-                    payload=payload,
+                    payload=json.dumps({'prompt': message}).encode(),
                 )
 
-                # Parse the response stream
-                response_body = response.get('body', b'')
-                if hasattr(response_body, 'read'):
-                    data = response_body.read().decode('utf-8')
+                # Read streaming body
+                resp_body = response.get('response', b'')
+                if hasattr(resp_body, 'read'):
+                    raw = resp_body.read().decode('utf-8')
                 else:
-                    data = response_body.decode('utf-8') if isinstance(response_body, bytes) else str(response_body)
+                    raw = str(resp_body)
 
-                # Forward as SSE events
-                for line in data.split('\n'):
-                    if line.strip():
-                        yield f"data: {line}\n\n"
+                # Parse and convert events
+                for event_json in parse_runtime_sse(raw):
+                    yield f"data: {event_json}\n\n"
 
-                yield "data: {\"type\": \"done\", \"content\": \"\"}\n\n"
+                yield 'data: {"type": "done", "content": ""}\n\n'
 
             except Exception as e:
-                logger.error(f'Runtime invocation error: {e}')
-                error_event = json.dumps({'type': 'error', 'content': str(e)})
-                yield f"data: {error_event}\n\n"
-                yield "data: {\"type\": \"done\", \"content\": \"\"}\n\n"
+                logger.error(f'Runtime error: {e}')
+                yield f'data: {json.dumps({"type": "error", "content": str(e)})}\n\n'
+                yield 'data: {"type": "done", "content": ""}\n\n'
 
         return StreamingResponse(
             stream_agent(),
             media_type='text/event-stream',
-            headers={
-                'Cache-Control': 'no-cache',
-                'X-Accel-Buffering': 'no',
-            }
+            headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
         )
 
     except Exception as e:
@@ -127,9 +147,9 @@ async def chat(request: Request):
 
 @app.get('/health')
 async def health():
-    """Health check for ALB"""
     return {'status': 'healthy'}
 
 
-# Mount static files (CSS, JS) AFTER route definitions
+# Static files (CSS, JS) - mounted last so routes take priority
+from fastapi.staticfiles import StaticFiles
 app.mount('/', StaticFiles(directory='/app/frontend', html=False), name='static')
