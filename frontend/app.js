@@ -20,6 +20,9 @@ let userPool;
 let cognitoUser;
 let idToken;
 
+// AgentCore Runtime session - reuse across conversation turns
+let sessionId = crypto.randomUUID();
+
 // 初始化 Cognito User Pool
 function initCognito() {
     const poolData = {
@@ -99,6 +102,7 @@ function logout() {
     if (cognitoUser) {
         cognitoUser.signOut();
     }
+    sessionId = crypto.randomUUID();
     showLogin();
 }
 
@@ -252,6 +256,7 @@ async function streamChat(message, messageElement) {
             },
             body: JSON.stringify({
                 message: message,
+                session_id: sessionId,
                 user_id: 'current_user'
             })
         });

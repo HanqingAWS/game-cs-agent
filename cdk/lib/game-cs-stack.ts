@@ -294,6 +294,7 @@ export class GameCsAgentStack extends cdk.Stack {
           },
         },
         publicLoadBalancer: true,
+        openListener: false,
         listenerPort: 80,
       },
     );
