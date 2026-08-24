@@ -22,6 +22,7 @@ KNOWLEDGE_BASE_ID = os.environ.get('KNOWLEDGE_BASE_ID', '')
 AGENTCORE_GATEWAY_URL = os.environ.get('AGENTCORE_GATEWAY_URL', '')
 REGION = os.environ.get('AWS_REGION_NAME', 'us-west-2')
 MODEL_ID = os.environ.get('MODEL_ID', 'global.anthropic.claude-haiku-4-5-20251001-v1:0')
+MAX_TOKENS = int(os.environ.get('MAX_TOKENS', '1024'))
 
 SYSTEM_PROMPT = """你是 Whiteout Survival（寒霜启示录）的客服助手，专门为玩家提供游戏帮助。
 
@@ -99,7 +100,11 @@ _agent = None
 def get_agent():
     global _agent
     if _agent is None:
-        model = BedrockModel(model_id=MODEL_ID, region=REGION)
+        model = BedrockModel(
+            model_id=MODEL_ID,
+            region_name=REGION,
+            max_tokens=MAX_TOKENS,
+        )
         # Start with KB tool only; MCP can fail without breaking Agent
         tools = [search_knowledge_base]
         if AGENTCORE_GATEWAY_URL:
