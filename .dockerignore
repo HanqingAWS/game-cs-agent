@@ -3,4 +3,7 @@ cdk/node_modules
 .git
 lambda
 runtime
+scripts
+deploy.sh
+cleanup.sh
 *.md

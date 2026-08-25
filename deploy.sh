@@ -1,121 +1,208 @@
 #!/bin/bash
 
-# Whiteout Survival 智能客服 - 一键部署脚本 (AgentCore Runtime + ECS Fargate 架构)
+# Whiteout Survival customer-service agent deployment.
 
-set -e
+set -euo pipefail
 
-echo "====================================="
-echo "Whiteout Survival 智能客服 - AgentCore 架构部署"
-echo "====================================="
-
-DEPLOY_REGION="${CDK_DEPLOY_REGION:-us-east-1}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEPLOY_REGION="${CDK_DEPLOY_REGION:-us-west-2}"
+STACK_NAME="${STACK_NAME:-GameCsAgentStack}"
+RUNTIME_REPOSITORY="${RUNTIME_REPOSITORY:-game-cs-runtime}"
 export CDK_DEPLOY_REGION="$DEPLOY_REGION"
-
-echo "部署区域: ${DEPLOY_REGION}"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-# Check tools
-echo ""
-echo -e "${YELLOW}检查必要工具...${NC}"
+info() {
+    echo -e "${YELLOW}$*${NC}"
+}
 
-for cmd in node npm aws docker; do
-    if ! command -v $cmd &> /dev/null; then
-        echo -e "${RED}错误: 未安装 $cmd${NC}"
-        exit 1
-    fi
-done
-echo -e "${GREEN}✓ 工具检查完成${NC}"
+success() {
+    echo -e "${GREEN}[OK] $*${NC}"
+}
 
-# Check AWS credentials
-echo ""
-echo -e "${YELLOW}检查 AWS 凭证...${NC}"
-if ! aws sts get-caller-identity &> /dev/null; then
-    echo -e "${RED}错误: AWS 凭证未配置${NC}"
+fail() {
+    echo -e "${RED}[ERROR] $*${NC}" >&2
     exit 1
+}
+
+stack_output() {
+    local output_key="$1"
+    aws cloudformation describe-stacks \
+        --stack-name "$STACK_NAME" \
+        --region "$DEPLOY_REGION" \
+        --query "Stacks[0].Outputs[?OutputKey==\`${output_key}\`].OutputValue | [0]" \
+        --output text
+}
+
+echo "====================================="
+echo "Whiteout Survival AgentCore deployment"
+echo "====================================="
+echo "Region: $DEPLOY_REGION"
+
+info "Checking required tools..."
+for cmd in node npm aws docker sha256sum; do
+    command -v "$cmd" >/dev/null 2>&1 || fail "Missing required command: $cmd"
+done
+docker buildx version >/dev/null 2>&1 || fail "Docker Buildx is required"
+success "Required tools are available"
+
+info "Checking AWS credentials..."
+aws sts get-caller-identity >/dev/null 2>&1 || fail "AWS credentials are not configured"
+ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+success "Authenticated to AWS account $ACCOUNT_ID"
+
+info "Preparing the Runtime ECR repository..."
+if ! aws ecr describe-repositories \
+    --repository-names "$RUNTIME_REPOSITORY" \
+    --region "$DEPLOY_REGION" >/dev/null 2>&1; then
+    aws ecr create-repository \
+        --repository-name "$RUNTIME_REPOSITORY" \
+        --image-scanning-configuration scanOnPush=true \
+        --region "$DEPLOY_REGION" >/dev/null
 fi
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-echo -e "${GREEN}✓ AWS 账号: ${ACCOUNT_ID}${NC}"
 
-# CDK setup
-cd cdk
-echo ""
-echo -e "${YELLOW}安装 CDK 依赖...${NC}"
-npm install
-echo -e "${GREEN}✓ 依赖安装完成${NC}"
+ECR_URI="${ACCOUNT_ID}.dkr.ecr.${DEPLOY_REGION}.amazonaws.com/${RUNTIME_REPOSITORY}"
+RUNTIME_SOURCE_HASH="$(
+    cd "$ROOT_DIR/runtime"
+    find . -type f -print | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-12
+)"
+RUNTIME_IMAGE_TAG="${RUNTIME_IMAGE_TAG:-otel-${RUNTIME_SOURCE_HASH}}"
 
-echo ""
-echo -e "${YELLOW}编译 TypeScript...${NC}"
-npm run build
-echo -e "${GREEN}✓ 编译完成${NC}"
+aws ecr get-login-password --region "$DEPLOY_REGION" |
+    docker login --username AWS --password-stdin \
+        "${ACCOUNT_ID}.dkr.ecr.${DEPLOY_REGION}.amazonaws.com" >/dev/null
 
-# Bootstrap CDK
-echo ""
-echo -e "${YELLOW}检查 CDK Bootstrap...${NC}"
-if ! aws cloudformation describe-stacks --stack-name CDKToolkit --region ${DEPLOY_REGION} &> /dev/null; then
-    echo "首次使用 CDK，正在进行 Bootstrap..."
-    npx cdk bootstrap aws://${ACCOUNT_ID}/${DEPLOY_REGION}
-    echo -e "${GREEN}✓ Bootstrap 完成${NC}"
+info "Preparing the ARM64 Buildx builder..."
+if ! docker buildx inspect multiarch >/dev/null 2>&1; then
+    docker buildx create \
+        --name multiarch \
+        --driver docker-container \
+        --platform linux/amd64,linux/arm64 \
+        --use >/dev/null
 else
-    echo -e "${GREEN}✓ CDK 已 Bootstrap${NC}"
+    docker buildx use multiarch
 fi
 
-# Deploy
-echo ""
-echo -e "${YELLOW}部署 CDK Stack (AgentCore Runtime + ECS Fargate)...${NC}"
-echo "这可能需要约 20 分钟（含 VPC、ALB、ECS、AOSS、KB 创建）..."
-echo ""
+if ! docker buildx inspect --bootstrap | grep -q 'linux/arm64'; then
+    info "Installing ARM64 emulation support..."
+    docker run --privileged --rm tonistiigi/binfmt --install arm64 >/dev/null
+    docker buildx inspect --bootstrap | grep -q 'linux/arm64' ||
+        fail "Buildx does not support linux/arm64"
+fi
 
-npx cdk deploy --require-approval never
+info "Building and pushing Runtime image ${ECR_URI}:${RUNTIME_IMAGE_TAG}..."
+docker buildx build \
+    --builder multiarch \
+    --platform linux/arm64 \
+    --push \
+    --tag "${ECR_URI}:${RUNTIME_IMAGE_TAG}" \
+    --file "$ROOT_DIR/runtime/Dockerfile" \
+    "$ROOT_DIR/runtime"
+success "Runtime image pushed"
 
-# Get outputs
-echo ""
-echo -e "${YELLOW}获取部署输出...${NC}"
+cd "$ROOT_DIR/cdk"
 
-CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
-    --stack-name GameCsAgentStack --region ${DEPLOY_REGION} \
-    --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' --output text)
+info "Installing CDK dependencies..."
+npm install --no-package-lock --no-audit --no-fund
+success "CDK dependencies installed"
 
-ALB_URL=$(aws cloudformation describe-stacks \
-    --stack-name GameCsAgentStack --region ${DEPLOY_REGION} \
-    --query 'Stacks[0].Outputs[?OutputKey==`ALBUrl`].OutputValue' --output text)
+info "Compiling TypeScript..."
+npm run build
+success "TypeScript compiled"
 
-USER_POOL_ID=$(aws cloudformation describe-stacks \
-    --stack-name GameCsAgentStack --region ${DEPLOY_REGION} \
-    --query 'Stacks[0].Outputs[?OutputKey==`UserPoolId`].OutputValue' --output text)
+info "Checking CDK bootstrap..."
+if ! aws cloudformation describe-stacks \
+    --stack-name CDKToolkit \
+    --region "$DEPLOY_REGION" >/dev/null 2>&1; then
+    npx cdk bootstrap "aws://${ACCOUNT_ID}/${DEPLOY_REGION}"
+fi
+success "CDK bootstrap is ready"
 
-CLIENT_ID=$(aws cloudformation describe-stacks \
-    --stack-name GameCsAgentStack --region ${DEPLOY_REGION} \
-    --query 'Stacks[0].Outputs[?OutputKey==`UserPoolClientId`].OutputValue' --output text)
+info "Synthesizing and reviewing the CDK change set..."
+npx cdk synth -c "runtimeImageTag=${RUNTIME_IMAGE_TAG}" >/dev/null
+npx cdk diff -c "runtimeImageTag=${RUNTIME_IMAGE_TAG}"
 
-cd ..
+info "Deploying ${STACK_NAME}..."
+npx cdk deploy \
+    --require-approval never \
+    -c "runtimeImageTag=${RUNTIME_IMAGE_TAG}"
+success "CloudFormation deployment completed"
+
+AGENT_RUNTIME_ARN="$(stack_output AgentRuntimeArn)"
+RUNTIME_ID="${AGENT_RUNTIME_ARN##*/}"
+RUNTIME_VERSION="$(
+    aws bedrock-agentcore-control get-agent-runtime \
+        --agent-runtime-id "$RUNTIME_ID" \
+        --region "$DEPLOY_REGION" \
+        --query agentRuntimeVersion \
+        --output text
+)"
+
+info "Promoting Runtime version ${RUNTIME_VERSION} to the production endpoint..."
+LIVE_VERSION="$(
+    aws bedrock-agentcore-control get-agent-runtime-endpoint \
+        --agent-runtime-id "$RUNTIME_ID" \
+        --endpoint-name production \
+        --region "$DEPLOY_REGION" \
+        --query liveVersion \
+        --output text
+)"
+
+if [ "$LIVE_VERSION" != "$RUNTIME_VERSION" ]; then
+    aws bedrock-agentcore-control update-agent-runtime-endpoint \
+        --agent-runtime-id "$RUNTIME_ID" \
+        --endpoint-name production \
+        --agent-runtime-version "$RUNTIME_VERSION" \
+        --region "$DEPLOY_REGION" >/dev/null
+fi
+
+for _ in $(seq 1 60); do
+    ENDPOINT_STATE="$(
+        aws bedrock-agentcore-control get-agent-runtime-endpoint \
+            --agent-runtime-id "$RUNTIME_ID" \
+            --endpoint-name production \
+            --region "$DEPLOY_REGION" \
+            --query '[status,liveVersion]' \
+            --output text
+    )"
+    ENDPOINT_STATUS="$(printf '%s' "$ENDPOINT_STATE" | awk '{print $1}')"
+    LIVE_VERSION="$(printf '%s' "$ENDPOINT_STATE" | awk '{print $2}')"
+
+    if [ "$ENDPOINT_STATUS" = "READY" ] && [ "$LIVE_VERSION" = "$RUNTIME_VERSION" ]; then
+        break
+    fi
+    if [[ "$ENDPOINT_STATUS" == *FAILED ]]; then
+        fail "Production endpoint update failed with status $ENDPOINT_STATUS"
+    fi
+    sleep 10
+done
+
+[ "$ENDPOINT_STATUS" = "READY" ] && [ "$LIVE_VERSION" = "$RUNTIME_VERSION" ] ||
+    fail "Production endpoint did not become ready on version $RUNTIME_VERSION"
+success "Production endpoint now serves Runtime version $RUNTIME_VERSION"
+
+cd "$ROOT_DIR"
+AGENT_RUNTIME_ARN="$AGENT_RUNTIME_ARN" \
+    CDK_DEPLOY_REGION="$DEPLOY_REGION" \
+    STACK_NAME="$STACK_NAME" \
+    "$ROOT_DIR/scripts/verify-agentcore-observability.sh"
+
+CLOUDFRONT_URL="$(stack_output CloudFrontURL)"
+ALB_URL="$(stack_output ALBUrl)"
+USER_POOL_ID="$(stack_output UserPoolId)"
+CLIENT_ID="$(stack_output UserPoolClientId)"
 
 echo ""
 echo "====================================="
-echo -e "${GREEN}部署成功！${NC}"
+success "Deployment and observability verification completed"
 echo "====================================="
-echo ""
-echo "📱 前端地址:"
-echo "   CloudFront: ${CLOUDFRONT_URL}"
-echo "   ALB 直连:   ${ALB_URL}"
-echo ""
-echo "🔐 测试账号:"
-echo "   邮箱: testuser@example.com"
-echo "   密码: TestUser123!"
-echo ""
-echo "🔑 AWS 配置:"
-echo "   User Pool ID: ${USER_POOL_ID}"
-echo "   Client ID: ${CLIENT_ID}"
-echo ""
-echo "🏗️ 架构: CloudFront → ALB → ECS Fargate → AgentCore Runtime"
-echo "   ✅ 真流式 SSE 输出"
-echo "   ✅ Cognito JWT 认证 (Runtime 内置)"
-echo "   ✅ config.js 由 Fargate 动态生成 (不再丢失！)"
-echo ""
-echo "🧹 清理资源:"
-echo "   运行 ./cleanup.sh 可删除所有资源"
-echo ""
-echo "====================================="
+echo "CloudFront: $CLOUDFRONT_URL"
+echo "ALB:        $ALB_URL"
+echo "User Pool:  $USER_POOL_ID"
+echo "Client ID:  $CLIENT_ID"
+echo "Runtime:    $AGENT_RUNTIME_ARN"
+echo "Version:    $RUNTIME_VERSION"
+echo "Image tag:  $RUNTIME_IMAGE_TAG"

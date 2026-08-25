@@ -12,6 +12,7 @@
 - **智能对话**: Claude Haiku 4.5 模型 (Global Inference Profile)
 - **知识库检索**: Bedrock Knowledge Base + Cohere Embed Multilingual V3（支持 100+ 语言跨语言匹配）
 - **MCP 工具**: AgentCore Gateway 标准化工具调用（充值查询等）
+- **在线评估**: Strands OpenTelemetry traces，可接入 AgentCore Evaluations
 - **Web 服务**: ECS Fargate (FastAPI) 托管前端 + API 代理
 - **负载均衡**: ALB（安全组限制仅 CloudFront 访问）
 - **身份认证**: Cognito User Pool
@@ -126,22 +127,31 @@ game-cs-agent/
 git clone https://github.com/HanqingAWS/game-cs-agent.git
 cd game-cs-agent
 
-# 2. 构建 Runtime arm64 镜像并推送到 ECR（首次部署需要）
-# 安装 QEMU 支持 arm64 交叉编译
-sudo docker run --privileged --rm tonistiigi/binfmt --install arm64
-docker buildx create --use --name multiarch --platform linux/amd64,linux/arm64
-
-# 构建并推送
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-REGION=us-west-2
-aws ecr create-repository --repository-name game-cs-runtime --region $REGION 2>/dev/null
-aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
-docker buildx build --platform linux/arm64 --load -t game-cs-runtime:latest -f runtime/Dockerfile runtime/
-docker tag game-cs-runtime:latest $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/game-cs-runtime:latest
-docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/game-cs-runtime:latest
-
-# 3. 一键部署
+# 2. 一键构建 Runtime、部署 CDK 并验证 OpenTelemetry traces
 CDK_DEPLOY_REGION=us-west-2 ./deploy.sh
+```
+
+`deploy.sh` 会完成以下操作：
+
+1. 基于 Runtime 源码内容生成不可变 ECR tag。
+2. 构建并推送 `linux/arm64` Runtime 镜像。
+3. 将镜像 tag 传给 CDK，并部署新的 AgentCore Runtime 版本。
+4. 将 `production` endpoint 更新到最新 Runtime 版本。
+5. 调用 Runtime，并确认 `aws/spans` 中出现 Strands telemetry。
+
+### AgentCore Evaluations
+
+Runtime 通过 AWS Distro for OpenTelemetry 启动。创建 AgentCore Evaluations
+配置时，使用以下 Scope name：
+
+```text
+strands.telemetry.tracer
+```
+
+也可以单独运行线上验证：
+
+```bash
+CDK_DEPLOY_REGION=us-west-2 ./scripts/verify-agentcore-observability.sh
 ```
 
 ### 部署时间
@@ -221,11 +231,8 @@ Q: player_003 充值了多少钱？
 ### 更新 Runtime 代码
 
 ```bash
-# 修改 runtime/main.py 后
-docker buildx build --platform linux/arm64 --load -t game-cs-runtime:v2 -f runtime/Dockerfile runtime/
-docker tag game-cs-runtime:v2 ACCOUNT.dkr.ecr.REGION.amazonaws.com/game-cs-runtime:v2
-docker push ACCOUNT.dkr.ecr.REGION.amazonaws.com/game-cs-runtime:v2
-# 更新 CDK 中的 tag 并 deploy
+# 修改 runtime/ 下的代码后重新运行
+CDK_DEPLOY_REGION=us-west-2 ./deploy.sh
 ```
 
 ## 🧹 清理资源

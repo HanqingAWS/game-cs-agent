@@ -23,6 +23,11 @@ export class GameCsAgentStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
+    const runtimeImageTag = String(this.node.tryGetContext('runtimeImageTag') ?? 'v4');
+    if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(runtimeImageTag)) {
+      throw new Error(`Invalid runtimeImageTag: ${runtimeImageTag}`);
+    }
+
     // ========== Cognito User Pool ==========
     const userPool = new cognito.UserPool(this, 'UserPool', {
       userPoolName: 'game-cs-agent-users',
@@ -233,12 +238,13 @@ export class GameCsAgentStack extends cdk.Stack {
       runtimeName: 'game_cs_agent_runtime',
       agentRuntimeArtifact: agentcore.AgentRuntimeArtifact.fromEcrRepository(
         ecr.Repository.fromRepositoryName(this, 'RuntimeRepo', 'game-cs-runtime'),
-        'v4',
+        runtimeImageTag,
       ),
       environmentVariables: {
         KNOWLEDGE_BASE_ID: knowledgeBaseId,
         AGENTCORE_GATEWAY_URL: agentcoreGatewayUrl,
         AWS_REGION_NAME: this.region,
+        MAX_TOKENS: '1024',
       },
       authorizerConfiguration: agentcore.RuntimeAuthorizerConfiguration.usingIAM(),
       protocolConfiguration: agentcore.ProtocolType.HTTP,
@@ -478,6 +484,11 @@ def handler(event, context):
     new cdk.CfnOutput(this, 'AgentRuntimeArn', {
       value: agentRuntime.agentRuntimeArn,
       description: 'AgentCore Runtime ARN',
+    });
+
+    new cdk.CfnOutput(this, 'RuntimeImageTag', {
+      value: runtimeImageTag,
+      description: 'ECR image tag deployed to AgentCore Runtime',
     });
   }
 }
